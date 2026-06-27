@@ -1,0 +1,10 @@
+{
+  "name": "lens-agent",
+  "version": "0.1.0",
+  "description": "Token-efficient code/doc retrieval for agents: FTS5 search, symbol outlines and surgical reads instead of reading whole files. Zero dependencies.",
+  "type": "module",
+  "bin": { "lens": "src/cli.js" },
+  "engines": { "node": ">=22" },
+  "scripts": { "mcp": "node mcp/mcp-server.js" },
+  "license": "MIT"
+}
