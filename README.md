@@ -58,4 +58,15 @@ Index location is `./.lens/index.db` (override with `LENS_DB`).
 - `outline` is regex-based per language (js/ts, py, go, rust, java, ruby, sql, markdown…).
 - `index` is **incremental** — files unchanged since last index (by mtime) are skipped.
 
+## The agent toolkit
+
+`lens` is the **read-code** leg of the `tools-for-agents` toolkit:
+
+- 🛰️ [**agent-hq**](https://github.com/tools-for-agents/agent-hq) — coordinate (memory, kanban, dashboard)
+- 🔎 **lens** — read code (token-budgeted retrieval)
+- 🔨 [**anvil**](https://github.com/tools-for-agents/anvil) — run safely (sandboxed execution)
+- 🧠 [**cortex**](https://github.com/tools-for-agents/cortex) — remember (Obsidian-compatible second brain)
+- 🧭 [**scout**](https://github.com/tools-for-agents/scout) — read the web (clean, cached markdown)
+- 🎯 [**recall**](https://github.com/tools-for-agents/recall) — recall it all (one query across every store)
+
 MIT licensed.
