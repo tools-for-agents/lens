@@ -51,6 +51,32 @@ test('readLines returns an exact, numbered range', () => {
   assert.match(r.body, /1\t/);
 });
 
+test('bad numeric args are coerced, not propagated as NaN (search / references / readLines)', () => {
+  // search: an unguarded NaN k errors on `LIMIT ?` or over-returns (budget check
+  // `tokens + t > NaN` never skips); all bad values recover the default result
+  const good = lens.search('req');
+  assert.ok(typeof good.count === 'number' && good.count >= 1, 'baseline search has a count');
+  for (const bad of [NaN, 0, -3, 'abc']) {
+    const r = lens.search('req', { k: bad });
+    assert.equal(r.count, good.count, `search k=${String(bad)} recovers the default count`);
+  }
+  assert.ok(lens.search('req', { max_tokens: 'xyz' }).tokens <= 1800, 'bad max_tokens falls back to the default budget');
+
+  // references: limit=0 used to truncate on the first ref; NaN never truncated
+  const refGood = lens.references('req');
+  for (const bad of [0, NaN, 'abc', -1]) {
+    assert.equal(lens.references('req', { limit: bad }).count, refGood.count, `references limit=${String(bad)} recovers the default`);
+  }
+
+  // readLines: NaN start/end must not yield NaN line numbers or a broken slice
+  const rl = lens.readLines(join(src, 'auth.js'), 'abc', 'xyz');
+  assert.equal(rl.start, 1, 'bad start falls back to line 1');
+  assert.ok(Number.isFinite(rl.end) && rl.end >= rl.start, 'end is a finite line >= start');
+  assert.ok(!/NaN/.test(rl.body), 'no NaN line numbers in the body');
+  const inv = lens.readLines(join(src, 'auth.js'), 5, 2);   // end < start
+  assert.ok(inv.end >= inv.start && inv.body.length > 0, 'an inverted range yields a sane window, not empty');
+});
+
 test('stats reports indexed files and languages', () => {
   const s = lens.stats();
   assert.ok(s.files >= 2);

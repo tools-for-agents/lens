@@ -103,6 +103,12 @@ function ftsQuery(q) {
 }
 
 export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
+  // Harden numeric args: bad input (NaN from a non-numeric query param, ≤0)
+  // falls back to the default. Unguarded, NaN k makes the SQL `LIMIT ?` bind
+  // fail (→ error result) and `results.length >= NaN` never break / the budget
+  // check `tokens + t > NaN` never skip — so the whole index over-returns.
+  k = Number.isFinite(+k) && +k > 0 ? Math.floor(+k) : 8;
+  max_tokens = Number.isFinite(+max_tokens) && +max_tokens > 0 ? Math.floor(+max_tokens) : 1800;
   const m = ftsQuery(query);
   if (!m) return { query, results: [], tokens: 0 };
   let sql = `SELECT path, body, lang, start, "end", bm25(chunks) AS score
@@ -131,6 +137,8 @@ export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
 // candidate chunks; we then scan their lines for a whole-word match (deduping the
 // overlap between adjacent chunks). Cheap, exact, and clickable — code navigation.
 export function references(symbol, { limit = 400 } = {}) {
+  // bad limit (NaN → never truncates; 0 → truncates on the first ref) → default
+  limit = Number.isFinite(+limit) && +limit > 0 ? Math.floor(+limit) : 400;
   const term = (String(symbol).match(/[A-Za-z0-9_]+/) || [])[0];
   if (!term) return { symbol: null, count: 0, files: [] };
   let rows;
@@ -201,11 +209,16 @@ export function outline(path) {
 
 // ── Surgical read ─────────────────────────────────────────────────────────────
 export function readLines(path, start = 1, end) {
+  // bad start/end (NaN from a non-numeric query param) would make Math.max(1,NaN)
+  // NaN → NaN line numbers and a broken slice; coerce to sane integers first.
+  start = Number.isFinite(+start) && +start >= 1 ? Math.floor(+start) : 1;
+  end = Number.isFinite(+end) && +end >= 1 ? Math.floor(+end) : undefined;
   let text;
   try { text = readFileSync(resolve(path), 'utf8'); } catch { throw new Error(`cannot read ${path}`); }
   const lines = text.split('\n');
   const s = Math.max(1, start);
-  const e = Math.min(lines.length, end || start + 60);
+  let e = Math.min(lines.length, end || start + 60);
+  if (e < s) e = Math.min(lines.length, s + 60);   // an end before start → a default window from start, not an empty read
   const body = lines.slice(s - 1, e).map((l, i) => `${s + i}\t${l}`).join('\n');
   return { path, start: s, end: e, total_lines: lines.length, tokens: estTokens(body), body };
 }
