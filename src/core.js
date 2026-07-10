@@ -191,6 +191,24 @@ OUTLINE_RE.cpp = OUTLINE_RE.c = OUTLINE_RE.java;
 
 const CTRL_KW = /^\s*(if|for|while|switch|catch|return|else|do|try|with|await|throw)\b/;
 
+// Classify an outline symbol by its declaration line — powers the web outline's
+// kind filter (function / class / type / const / heading / …). Best-effort, cross-language.
+export function symbolKind(text, lang) {
+  const s = String(text);
+  if (lang === 'markdown' || /^#{1,6}\s/.test(s)) return 'heading';
+  if (/^\s*(CREATE|ALTER)\s+/i.test(s)) return 'table';
+  if (/^\s*(export\s+)?(default\s+)?(abstract\s+)?class\s/.test(s)) return 'class';
+  if (/^\s*(pub\s+)?(export\s+)?(interface|type|enum|struct|trait)\s/.test(s)) return 'type';
+  if (/^\s*(module|mod)\s/.test(s)) return 'module';
+  if (/^\s*(pub\s+)?(export\s+)?(default\s+)?(async\s+)?(function|def|func|fn)\b/.test(s)) return 'function';
+  if (/^\s*(export\s+)?(const|let|var)\s/.test(s)) {
+    return (/=>/.test(s) || /=\s*(async\s+)?function\b/.test(s) || /=\s*(async\s*)?\(/.test(s)) ? 'function' : 'const';
+  }
+  if (/^\s*(public|private|protected|static|[\w$<>[\].]+)\s+[\w$]+\s*\(/.test(s)) return 'function';  // typed / java-ish method
+  if (/^\s*[\w$]+\s*\([^)]*\)\s*\{/.test(s)) return 'function';                                        // bare method
+  return 'other';
+}
+
 export function outline(path) {
   let text;
   try { text = readFileSync(resolve(path), 'utf8'); } catch { throw new Error(`cannot read ${path}`); }
@@ -202,7 +220,7 @@ export function outline(path) {
     const line = lines[i];
     if (line.length > 240) continue;
     if (CTRL_KW.test(line)) continue;        // skip control-flow that looks like a call
-    if (res.some((re) => re.test(line))) symbols.push({ line: i + 1, text: line.trim().slice(0, 160) });
+    if (res.some((re) => re.test(line))) symbols.push({ line: i + 1, text: line.trim().slice(0, 160), kind: symbolKind(line, lang) });
   }
   return { path, lang, lines: lines.length, symbols };
 }

@@ -44,6 +44,18 @@ test('outline extracts symbols with line numbers', () => {
   assert.ok(o.symbols.every((s) => typeof s.line === 'number'));
 });
 
+test('outline classifies each symbol by kind (drives the web kind filter)', () => {
+  const o = lens.outline(join(src, 'auth.js'));
+  assert.ok(o.symbols.every((s) => typeof s.kind === 'string'), 'every symbol has a kind');
+  assert.equal(o.symbols.find((s) => /parseAuthHeader/.test(s.text)).kind, 'function', 'a function declaration → function');
+  assert.equal(o.symbols.find((s) => /class TokenStore/.test(s.text)).kind, 'class', 'a class declaration → class');
+  assert.ok(lens.outline(join(src, 'notes.md')).symbols.some((s) => s.kind === 'heading'), 'markdown headings → heading');
+  // the classifier directly, on the tricky cases
+  assert.equal(lens.symbolKind('export const fetchUser = async (id) => {', 'javascript'), 'function', 'arrow-assigned const → function');
+  assert.equal(lens.symbolKind('const MAX_RETRIES = 5;', 'javascript'), 'const', 'plain const → const');
+  assert.equal(lens.symbolKind('export interface Opts {', 'typescript'), 'type', 'interface → type');
+});
+
 test('readLines returns an exact, numbered range', () => {
   const r = lens.readLines(join(src, 'auth.js'), 1, 2);
   assert.equal(r.start, 1);
