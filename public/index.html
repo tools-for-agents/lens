@@ -101,6 +101,22 @@
     color:var(--txt); font-family:var(--mono); font-size:12px; padding:7px 10px; outline:none;
   }
   .filter input:focus { border-color:var(--accent-dim); }
+  .recent { padding:9px 10px 5px; border-bottom:1px solid var(--line); }
+  .recent[hidden] { display:none; }
+  .recent .rh { display:flex; align-items:center; justify-content:space-between;
+    font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:1px;
+    color:var(--dim); padding:0 2px 7px; }
+  .recent .rh .clr { cursor:pointer; background:none; border:none; color:var(--dim);
+    font-family:var(--mono); font-size:9.5px; letter-spacing:.5px; text-transform:uppercase; padding:0; }
+  .recent .rh .clr:hover { color:var(--accent); }
+  .recent .rchips { display:flex; flex-wrap:wrap; gap:5px; }
+  .recent .rchip { display:inline-flex; align-items:center; gap:6px; max-width:100%; cursor:pointer;
+    font-family:var(--mono); font-size:11px; color:var(--txt); background:var(--panel);
+    border:1px solid var(--line); border-radius:6px; padding:4px 9px; }
+  .recent .rchip:hover { border-color:var(--accent-dim); background:var(--panel-2); }
+  .recent .rchip.active { border-color:var(--accent-dim); color:var(--accent); }
+  .recent .rchip .dot { width:7px; height:7px; border-radius:2px; flex:0 0 auto; }
+  .recent .rchip .nm { overflow:hidden; text-overflow:ellipsis; max-width:132px; }
   .tree { flex:1; overflow:auto; padding:6px 4px 40px; }
   .tgroup > .tg-head {
     display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11px; color:var(--muted);
@@ -255,6 +271,7 @@
   <aside class="rail">
     <div class="stats" id="stats"></div>
     <div class="filter"><input id="filter" placeholder="filter files…" autocomplete="off" spellcheck="false" /></div>
+    <div class="recent" id="recent" hidden></div>
     <div class="tree" id="tree"></div>
   </aside>
 
@@ -299,7 +316,7 @@ let TREE = [], STATS = null, activeFile = null, mode = 'search';
 // ── Boot ───────────────────────────────────────────────────────────────────
 (async () => {
   [STATS, TREE] = await Promise.all([api('/api/stats'), api('/api/map').then((m) => m.tree)]);
-  renderStats(); renderTree('');
+  renderStats(); renderTree(''); renderRecent();
   $('#repo').textContent = STATS.files + ' files indexed';
   openFromHash();                       // deep-link: #<path>:<line> (e.g. from recall)
 })();
@@ -364,9 +381,42 @@ $('#tree').addEventListener('click', (e) => {
 });
 $('#filter').addEventListener('input', (e) => renderTree(e.target.value));
 
+// ── Recent files (client-side, localStorage) ────────────────────────────────
+const LKEY = 'lens:recent', LCAP = 8;
+let recentFiles = loadRecentFiles();     // declared before any handler runs (avoid TDZ)
+function loadRecentFiles() {
+  try { const a = JSON.parse(localStorage.getItem(LKEY)); return Array.isArray(a) ? a.filter((x) => typeof x === 'string').slice(0, LCAP) : []; }
+  catch { return []; }
+}
+function saveRecentFiles() { try { localStorage.setItem(LKEY, JSON.stringify(recentFiles)); } catch {} }
+function pushRecentFile(path) {
+  recentFiles = [path, ...recentFiles.filter((p) => p !== path)].slice(0, LCAP);
+  saveRecentFiles(); renderRecent();
+}
+function renderRecent() {
+  const live = recentFiles.filter((p) => TREE.some((t) => t.path === p));   // drop files no longer indexed
+  if (live.length !== recentFiles.length) { recentFiles = live; saveRecentFiles(); }
+  const el = $('#recent');
+  if (!live.length) { el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML =
+    `<div class="rh"><span>recent files</span><button class="clr" data-clear title="Clear recent files">clear ✕</button></div>
+     <div class="rchips">` +
+    live.map((p) => { const f = TREE.find((t) => t.path === p) || {}; const name = p.split('/').pop();
+      return `<button class="rchip${activeFile === p ? ' active' : ''}" data-path="${esc(p)}" title="${esc(p)}"><span class="dot" style="background:${langColor(f.lang)}"></span><span class="nm">${esc(name)}</span></button>`;
+    }).join('') +
+    `</div>`;
+  el.hidden = false;
+}
+$('#recent').addEventListener('click', (e) => {
+  if (e.target.closest('[data-clear]')) { recentFiles = []; saveRecentFiles(); renderRecent(); return; }
+  const chip = e.target.closest('[data-path]');
+  if (chip) openFile(chip.dataset.path);
+});
+
 // ── Open a file: reader + outline ───────────────────────────────────────────
 async function openFile(path, line) {
   activeFile = path;
+  pushRecentFile(path);                  // remember it in the recent-files strip
   document.querySelectorAll('.tfile').forEach((el) => el.classList.toggle('active', el.dataset.path === path));
   $('#results').hidden = true; $('#welcome').style.display = 'none';
   $('#reader').classList.add('show');
