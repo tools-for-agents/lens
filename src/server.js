@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname, normalize } from 'node:path';
-import { search, outline, readLines, map, stats, isIndexed, fileMeta } from './core.js';
+import { search, references, outline, readLines, map, stats, isIndexed, fileMeta } from './core.js';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(__dir, '..', 'public');
@@ -23,6 +23,7 @@ const api = {
   '/api/stats': () => stats(),
   '/api/map': () => map({ limit: 2000 }),
   '/api/search': (q) => search(q.q || '', { k: q.k ? +q.k : 12, max_tokens: q.tokens ? +q.tokens : 2400, path_glob: q.glob || undefined }),
+  '/api/references': (q) => references(q.symbol || '', { limit: q.limit ? +q.limit : 400 }),
   '/api/outline': (q) => {
     if (!q.path || !isIndexed(q.path)) throw new Error('path not in index');
     return outline(q.path);

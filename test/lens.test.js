@@ -62,6 +62,18 @@ test('empty query returns no results, not an error', () => {
   assert.equal((r.results || []).length, 0);
 });
 
+test('references finds every line that mentions a symbol, grouped by file', () => {
+  const r = lens.references('req');
+  assert.ok(r.count >= 2, 'req appears on at least two lines');
+  const g = r.groups.find((x) => x.path.endsWith('auth.js'));
+  assert.ok(g, 'grouped under auth.js');
+  assert.ok(g.refs.every((x) => typeof x.line === 'number' && x.text), 'each ref has a line + text');
+  // whole-word matching: the function name is defined once
+  assert.equal(lens.references('parseAuthHeader').count, 1);
+  // a non-word / empty symbol is handled, not thrown
+  assert.equal(lens.references('   ').count, 0);
+});
+
 test('serve: HTTP endpoints expose the index and guard path traversal', async () => {
   const { createLensServer } = await import('../src/server.js');
   const server = createLensServer();
@@ -73,6 +85,10 @@ test('serve: HTTP endpoints expose the index and guard path traversal', async ()
 
     const hits = await fetch(base + '/api/search?q=parseAuthHeader').then((r) => r.json());
     assert.ok(hits.results.some((x) => /parseAuthHeader/.test(x.body)), 'search returns the symbol');
+
+    const refs = await fetch(base + '/api/references?symbol=parseAuthHeader').then((r) => r.json());
+    assert.equal(refs.symbol, 'parseAuthHeader');
+    assert.ok(refs.count >= 1 && refs.groups[0].refs[0].line > 0, 'references returns file:line groups');
 
     const guard = await fetch(base + '/api/read?path=' + encodeURIComponent('../../etc/passwd')).then((r) => r.json());
     assert.equal(guard.error, 'path not in index', 'read rejects non-indexed / traversal paths');

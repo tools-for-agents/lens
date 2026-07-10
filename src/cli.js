@@ -2,11 +2,12 @@
 // lens CLI — index a repo and query it from the shell.
 //   lens index <path> [--reindex]
 //   lens search "<query>" [-k 8] [--tokens 1800] [--glob '*.js']
+//   lens refs <symbol>
 //   lens outline <file>
 //   lens read <file> <start> <end>
 //   lens map | lens stats
 //   lens serve [--port 7900]
-import { indexPath, search, outline, readLines, map, stats } from './core.js';
+import { indexPath, search, references, outline, readLines, map, stats } from './core.js';
 
 const [, , cmd, ...rest] = process.argv;
 const flag = (n, d) => { const i = rest.indexOf(n); return i >= 0 ? rest[i + 1] : d; };
@@ -25,6 +26,16 @@ try {
       out(x.body);
     }
     out(`\n— ${r.count || 0} hits, ~${r.tokens || 0} tokens —`);
+  } else if (cmd === 'refs' || cmd === 'references') {
+    const r = references(rest.find((a) => !a.startsWith('-')) || '');
+    if (!r.symbol) { out('usage: lens refs <symbol>'); }
+    else {
+      for (const g of r.groups) {
+        out(`\n▸ ${g.path}  [${g.lang}]  ${g.refs.length} ref${g.refs.length === 1 ? '' : 's'}`);
+        for (const ref of g.refs) out(`${String(ref.line).padStart(6)}  ${ref.text}`);
+      }
+      out(`\n— ${r.count} references to "${r.symbol}" across ${r.files} files${r.truncated ? ' (truncated)' : ''} —`);
+    }
   } else if (cmd === 'outline') {
     const r = outline(rest[0]);
     out(`${r.path} (${r.lang}, ${r.lines} lines) — ${r.symbols.length} symbols`);
@@ -43,6 +54,7 @@ try {
 
   lens index <path> [--reindex]     build / refresh the index
   lens search "<query>" [-k N] [--tokens N] [--glob PAT]
+  lens refs <symbol>                every line that mentions a symbol
   lens outline <file>               symbol map, no full read
   lens read <file> <start> <end>    surgical line read
   lens map | lens stats

@@ -23,6 +23,7 @@ Part of [`tools-for-agents`](https://github.com/tools-for-agents). **Zero depend
 ```bash
 node src/cli.js index .                       # build the index (incremental on re-run)
 node src/cli.js search "websocket reconnect" -k 6 --tokens 1500 --glob 'src/*'
+node src/cli.js refs parseAuthHeader          # every line that mentions a symbol
 node src/cli.js outline src/server.js         # symbol map, no full read
 node src/cli.js read src/server.js 40 80      # surgical line range
 node src/cli.js stats                         # index stats
@@ -42,7 +43,8 @@ A zero-dependency, IDE-style explorer for the same index the agent queries — s
 
 - **FTS search** across the repo, ranked by bm25, with each snippet's **`~token` cost** and matched terms highlighted — the token-budgeted view an agent gets.
 - **File tree** grouped by directory with a language-distribution bar.
-- **Syntax-highlighted reader** with line numbers and a live **symbol outline** (click a symbol to jump).
+- **Syntax-highlighted reader** with line numbers and a live **symbol outline** (click a symbol to jump, or ⇉ to find its references).
+- **Find references** — flip the search to `⇉ refs` mode (or hit ⇉ on an outline symbol) to list every line across the repo that mentions a symbol, grouped by file; click a line to open it.
 - Read-only; `outline`/`read` are guarded to indexed paths (no traversal).
 
 ## MCP server (for agents)
@@ -62,6 +64,7 @@ A zero-dependency, IDE-style explorer for the same index the agent queries — s
 |---|---|
 | `lens_index` | Index / refresh a path (incremental: only changed files re-read). |
 | `lens_search` | Get ranked snippets within a **token budget** — use instead of reading files. |
+| `lens_references` | Find every line that mentions a symbol (whole-word), grouped by file — where is it used/defined? |
 | `lens_outline` | Get a file's symbol map (functions/classes/headings) with line numbers. |
 | `lens_read` | Read an exact line range. |
 | `lens_map` | List indexed files + language breakdown. |

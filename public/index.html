@@ -120,6 +120,25 @@
   .hit pre { margin:0; padding:11px 14px; overflow:auto; font-family:var(--mono); font-size:12px; line-height:1.55; max-height:230px; }
   mark { background:rgba(242,193,78,.24); color:#ffe6a0; border-radius:2px; padding:0 1px; }
 
+  /* search / refs mode toggle */
+  .mode { display:flex; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:2px; flex:0 0 auto; }
+  .mode button { font-family:var(--mono); font-size:11px; color:var(--muted); background:none; border:none; border-radius:7px; padding:6px 10px; cursor:pointer; transition:color .12s, background .12s; }
+  .mode button:hover { color:var(--txt); }
+  .mode button.on { background:var(--panel-2); color:var(--accent); }
+
+  /* references view */
+  .refgroup .hit-head { cursor:default; }
+  .reflines { padding:3px 0; }
+  .refline { display:flex; gap:12px; align-items:baseline; padding:4px 14px; cursor:pointer; font-family:var(--mono); font-size:12px; }
+  .refline:hover { background:var(--panel-2); }
+  .refline .rl { color:var(--dim); min-width:46px; text-align:right; flex:0 0 auto; font-variant-numeric:tabular-nums; }
+  .refline code { color:var(--txt); white-space:pre-wrap; word-break:break-word; }
+  .osym { position:relative; }
+  .osym-r { position:absolute; right:8px; top:50%; transform:translateY(-50%); font-family:var(--mono); font-size:9.5px; color:var(--dim);
+    background:var(--panel-2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; cursor:pointer; opacity:0; transition:opacity .12s, color .12s; }
+  .osym:hover .osym-r { opacity:1; }
+  .osym-r:hover { color:var(--accent); border-color:var(--accent); }
+
   /* file reader */
   .reader { display:none; height:100%; grid-template-columns:1fr 220px; overflow:hidden; }
   .reader.show { display:grid; }
@@ -187,6 +206,10 @@
       <div><b>lens</b> <span class="tag">code explorer</span></div>
     </div>
     <div class="search">
+      <div class="mode" id="mode">
+        <button data-m="search" class="on" title="Ranked snippet search">⌕ search</button>
+        <button data-m="refs" title="Find every line that mentions a symbol">⇉ refs</button>
+      </div>
       <div class="field">
         <span class="ic">⌕</span>
         <input id="q" placeholder="search the index — functions, strings, symbols…" autocomplete="off" spellcheck="false" />
@@ -226,7 +249,7 @@ const api = (p) => fetch(p).then((r) => r.json());
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 const langColor = (l) => getComputedStyle(document.documentElement).getPropertyValue('--l-' + l).trim() || 'var(--l-text)';
 
-let TREE = [], STATS = null, activeFile = null;
+let TREE = [], STATS = null, activeFile = null, mode = 'search';
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 (async () => {
@@ -317,15 +340,24 @@ async function openFile(path, line) {
     </span>`;
   $('#code').innerHTML = renderCode(file.body, lang);
   $('#outline').innerHTML = `<div class="oh">outline · ${ol.symbols.length} symbols</div>` +
-    (ol.symbols.map((s) => `<div class="osym" data-line="${s.line}"><span class="ol">${s.line}</span><span class="ot">${esc(s.text)}</span></div>`).join('')
-      || '<div class="osym" style="color:var(--dim)">no symbols</div>');
+    (ol.symbols.map((s) => { const sym = symbolName(s.text);
+      return `<div class="osym" data-line="${s.line}"><span class="ol">${s.line}</span><span class="ot">${esc(s.text)}</span>${sym ? `<button class="osym-r" data-sym="${esc(sym)}" title="find references to ${esc(sym)}">⇉ refs</button>` : ''}</div>`;
+    }).join('') || '<div class="osym" style="color:var(--dim)">no symbols</div>');
   if (line) scrollToLine(line); else $('#code').parentElement.scrollTop = 0;
 }
 function dirfmt(path) {
   const parts = path.split('/'); const name = parts.pop();
   return (parts.length ? `<span class="d">${esc(parts.join('/'))}/</span>` : '') + esc(name);
 }
+// the first non-keyword identifier in an outline line — usually the symbol's name
+const OUTLINE_KW = new Set('export default async function const let var class abstract interface type enum def func fn pub struct trait impl mod public private protected static void return new'.split(' '));
+function symbolName(text) {
+  const ids = String(text).match(/[A-Za-z_$][\w$]*/g) || [];
+  return ids.find((w) => !OUTLINE_KW.has(w)) || '';
+}
 $('#outline').addEventListener('click', (e) => {
+  const rb = e.target.closest('.osym-r');
+  if (rb) { e.stopPropagation(); setMode('refs'); $('#q').value = rb.dataset.sym; runRefs(rb.dataset.sym); return; }
   const s = e.target.closest('[data-line]'); if (s) scrollToLine(+s.dataset.line);
 });
 function scrollToLine(line) {
@@ -388,9 +420,43 @@ $('#q').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
   if (!q) { $('#results').hidden = true; $('#budget').textContent = ''; if (!activeFile) $('#welcome').style.display = ''; return; }
-  searchTimer = setTimeout(() => runSearch(q), 180);
+  searchTimer = setTimeout(() => (mode === 'refs' ? runRefs(q) : runSearch(q)), 180);
 });
 $('#q').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); $('#results').hidden = true; $('#budget').textContent = ''; } });
+
+// search ⇄ refs mode
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('#mode button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+  $('#q').placeholder = m === 'refs' ? 'find references — a symbol name…' : 'search the index — functions, strings, symbols…';
+}
+$('#mode').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-m]'); if (!b) return;
+  setMode(b.dataset.m);
+  const q = $('#q').value.trim();
+  if (q) (mode === 'refs' ? runRefs(q) : runSearch(q)); else $('#q').focus();
+});
+
+async function runRefs(symbol) {
+  const r = await api('/api/references?symbol=' + encodeURIComponent(symbol));
+  $('#welcome').style.display = 'none'; $('#reader').classList.remove('show');
+  $('#results').hidden = false;
+  if (!r.symbol || !r.count) {
+    $('#budget').textContent = '';
+    $('#results').innerHTML = `<div class="res-head">No references to “${esc(symbol)}”. Try an exact identifier (function, variable, class).</div>`;
+    return;
+  }
+  $('#budget').innerHTML = `<b>${r.count}</b> refs · <b>${r.files}</b> file${r.files === 1 ? '' : 's'}`;
+  $('#results').innerHTML = `<div class="res-head"><b>${r.count}</b> references to <b>${esc(r.symbol)}</b> across <b>${r.files}</b> file${r.files === 1 ? '' : 's'}${r.truncated ? ' (truncated)' : ''} — click a line to open it</div>` +
+    r.groups.map((g) => refGroup(g, r.symbol)).join('');
+}
+function refGroup(g, sym) {
+  const re = new RegExp('(' + sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'g');
+  return `<div class="hit refgroup">
+    <div class="hit-head"><span class="p">${dirfmt(g.path)}</span><span class="meta"><span class="lang">${esc(g.lang)}</span><span>${g.refs.length} ref${g.refs.length === 1 ? '' : 's'}</span></span></div>
+    <div class="reflines">${g.refs.map((ref) => `<div class="refline" data-path="${esc(g.path)}" data-line="${ref.line}"><span class="rl">${ref.line}</span><code>${esc(ref.text).replace(re, '<mark>$1</mark>')}</code></div>`).join('')}</div>
+  </div>`;
+}
 
 async function runSearch(q) {
   const r = await api('/api/search?k=12&q=' + encodeURIComponent(q));
@@ -422,7 +488,10 @@ function highlightWithTerms(body, lang, terms) {
   return html;
 }
 $('#results').addEventListener('click', (e) => {
-  const hit = e.target.closest('.hit'); if (hit) openFile(hit.dataset.path, +hit.dataset.line);
+  const rl = e.target.closest('.refline');
+  if (rl) { openFile(rl.dataset.path, +rl.dataset.line); return; }
+  const hit = e.target.closest('.hit');
+  if (hit && hit.dataset.path) openFile(hit.dataset.path, +hit.dataset.line);
 });
 
 // ── Keyboard: "/" focuses search ────────────────────────────────────────────

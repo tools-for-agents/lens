@@ -3,7 +3,7 @@
 // search returns just-enough ranked snippets, outline maps a file without reading
 // it whole, read pulls exact line ranges. Runs locally with filesystem access.
 import { createInterface } from 'node:readline';
-import { indexPath, search, outline, readLines, map, stats } from '../src/core.js';
+import { indexPath, search, references, outline, readLines, map, stats } from '../src/core.js';
 
 const PROTOCOL = '2024-11-05';
 
@@ -27,6 +27,15 @@ const tools = [
       path_glob: { type: 'string', description: "Restrict to paths, e.g. 'src/*.js'" },
     }, required: ['query'] },
     run: (a) => search(a.query, { k: a.k, max_tokens: a.max_tokens, path_glob: a.path_glob }),
+  },
+  {
+    name: 'lens_references',
+    description: 'Find every line across the index that mentions a symbol (whole-word), grouped by file with line numbers. Use to see where a function/variable/class is used or defined before editing it.',
+    inputSchema: { type: 'object', properties: {
+      symbol: { type: 'string', description: 'The identifier to find, e.g. "parseAuthHeader"' },
+      limit: { type: 'integer', description: 'Max references (default 400)' },
+    }, required: ['symbol'] },
+    run: (a) => references(a.symbol, { limit: a.limit }),
   },
   {
     name: 'lens_outline',

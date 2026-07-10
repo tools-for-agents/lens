@@ -126,6 +126,42 @@ export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
   return { query, count: results.length, tokens, results };
 }
 
+// ── Find references ───────────────────────────────────────────────────────────
+// Every line across the index that mentions a symbol, grouped by file. FTS finds
+// candidate chunks; we then scan their lines for a whole-word match (deduping the
+// overlap between adjacent chunks). Cheap, exact, and clickable — code navigation.
+export function references(symbol, { limit = 400 } = {}) {
+  const term = (String(symbol).match(/[A-Za-z0-9_]+/) || [])[0];
+  if (!term) return { symbol: null, count: 0, files: [] };
+  let rows;
+  try { rows = all(`SELECT path, body, lang, start FROM chunks WHERE chunks MATCH ? ORDER BY path, start`, `"${term}"`); }
+  catch (e) { return { symbol: term, count: 0, files: [], error: String(e.message) }; }
+
+  const re = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+  const byFile = new Map();
+  const seen = new Set();          // path:line — adjacent chunks overlap, so dedupe
+  let count = 0, truncated = false;
+  for (const r of rows) {
+    const lines = r.body.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (!re.test(lines[i])) continue;
+      const lineNo = r.start + i;
+      const key = r.path + ':' + lineNo;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (count >= limit) { truncated = true; break; }
+      if (!byFile.has(r.path)) byFile.set(r.path, { path: r.path, lang: r.lang, refs: [] });
+      byFile.get(r.path).refs.push({ line: lineNo, text: lines[i].trim().slice(0, 200) });
+      count++;
+    }
+    if (truncated) break;
+  }
+  const files = [...byFile.values()]
+    .map((f) => ({ ...f, refs: f.refs.sort((a, b) => a.line - b.line) }))
+    .sort((a, b) => b.refs.length - a.refs.length || a.path.localeCompare(b.path));
+  return { symbol: term, count, files: files.length, groups: files, truncated };
+}
+
 // ── Outline ─────────────────────────────────────────────────────────────────
 const OUTLINE_RE = {
   javascript: [/^\s*(export\s+)?(default\s+)?(async\s+)?(function\*?)\s+([\w$]+)/,
