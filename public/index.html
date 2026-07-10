@@ -223,7 +223,19 @@ let TREE = [], STATS = null, activeFile = null;
   [STATS, TREE] = await Promise.all([api('/api/stats'), api('/api/map').then((m) => m.tree)]);
   renderStats(); renderTree('');
   $('#repo').textContent = STATS.files + ' files indexed';
+  openFromHash();                       // deep-link: #<path>:<line> (e.g. from recall)
 })();
+
+// Open a file from the URL hash — "#path/to/file.js:42" — so other tools can
+// link straight to a snippet. The line is the segment after the last colon.
+function openFromHash() {
+  const h = decodeURIComponent(location.hash.slice(1));
+  if (!h) return;
+  const m = h.match(/^(.*?):(\d+)(?:\.\d+)?$/);   // tolerate a "45" or "45.0" line
+  const path = m ? m[1] : h, line = m ? +m[2] : undefined;
+  if (TREE.some((t) => t.path === path)) openFile(path, line);
+}
+addEventListener('hashchange', openFromHash);
 
 // ── Stats + language bar ─────────────────────────────────────────────────────
 function renderStats() {
