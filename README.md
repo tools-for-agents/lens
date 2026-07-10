@@ -88,7 +88,7 @@ A zero-dependency, IDE-style explorer for the same index the agent queries — s
 
 - 🛰️ [**agent-hq**](https://github.com/tools-for-agents/agent-hq) — coordinate (memory, kanban, dashboard)
 - 🔎 **lens** — read code (token-budgeted retrieval)
-- 🔨 [**anvil**](https://github.com/tools-for-agents/anvil) — run safely (sandboxed execution)
+- ⚒ [**anvil**](https://github.com/tools-for-agents/anvil) — run safely (sandboxed execution)
 - 🧠 [**cortex**](https://github.com/tools-for-agents/cortex) — remember (Obsidian-compatible second brain)
 - 🧭 [**scout**](https://github.com/tools-for-agents/scout) — read the web (clean, cached markdown)
 - 🎯 [**recall**](https://github.com/tools-for-agents/recall) — recall it all (one query across every store)
