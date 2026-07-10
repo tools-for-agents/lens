@@ -34,6 +34,8 @@ Index location is `./.lens/index.db` (override with `LENS_DB`).
 
 ## Web explorer (`lens serve`)
 
+![lens serve — the code explorer: file tree, FTS search, syntax-highlighted reader and symbol outline](docs/web-view.png)
+
 ```bash
 node src/cli.js index .        # index the repo you're in
 node src/cli.js serve          # → http://localhost:7900  (--port to change)
