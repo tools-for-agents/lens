@@ -101,6 +101,10 @@
     color:var(--txt); font-family:var(--mono); font-size:12px; padding:7px 10px; outline:none;
   }
   .filter input:focus { border-color:var(--accent-dim); }
+  /* ── Accessibility: a visible focus ring for keyboard users on every control ── */
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .tfile:focus-visible, .osym:focus-visible, .tg-head:focus-visible { outline-offset:-2px; }
   .recent { padding:9px 10px 5px; border-bottom:1px solid var(--line); }
   .recent[hidden] { display:none; }
   .recent .rh { display:flex; align-items:center; justify-content:space-between;
@@ -181,7 +185,7 @@
   .osym { position:relative; }
   .osym-r { position:absolute; right:8px; top:50%; transform:translateY(-50%); font-family:var(--mono); font-size:9.5px; color:var(--dim);
     background:var(--panel-2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; cursor:pointer; opacity:0; transition:opacity .12s, color .12s; }
-  .osym:hover .osym-r { opacity:1; }
+  .osym:hover .osym-r, .osym:focus-within .osym-r, .osym-r:focus-visible { opacity:1; }   /* keyboard users can see + reach it */
   .osym-r:hover { color:var(--accent); border-color:var(--accent); }
 
   /* file reader */
@@ -363,14 +367,14 @@ function renderTree(filter) {
   $('#tree').innerHTML = dirs.map((dir) => {
     const files = groups[dir].sort((a, b) => a.path.localeCompare(b.path));
     return `<div class="tgroup${f ? '' : ''}">
-      <div class="tg-head"><span class="caret">▾</span><span>${esc(dir)}</span><span class="tg-n">${files.length}</span></div>
+      <div class="tg-head" tabindex="0" role="button" aria-label="Toggle ${esc(dir)}"><span class="caret">▾</span><span>${esc(dir)}</span><span class="tg-n">${files.length}</span></div>
       <div class="tg-body">${files.map(fileRow).join('')}</div>
     </div>`;
   }).join('') || '<div style="padding:20px;color:var(--dim);font-family:var(--mono);font-size:12px">no files match</div>';
 }
 function fileRow(file) {
   const name = file.path.split('/').pop();
-  return `<div class="tfile${activeFile === file.path ? ' active' : ''}" data-path="${esc(file.path)}" title="${esc(file.path)}">
+  return `<div class="tfile${activeFile === file.path ? ' active' : ''}" data-path="${esc(file.path)}" title="${esc(file.path)}" tabindex="0" role="button" aria-label="Open ${esc(file.path)}">
     <span class="dot" style="background:${langColor(file.lang)}"></span>
     <span class="nm">${esc(name)}</span><span class="ln">${file.lines}</span>
   </div>`;
@@ -380,6 +384,13 @@ $('#tree').addEventListener('click', (e) => {
   if (head) { head.parentElement.classList.toggle('collapsed'); return; }
   const row = e.target.closest('.tfile');
   if (row) openFile(row.dataset.path);
+});
+$('#tree').addEventListener('keydown', (e) => {   // keyboard-operable tree (Enter / Space)
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const head = e.target.closest('.tg-head');
+  if (head) { e.preventDefault(); head.parentElement.classList.toggle('collapsed'); return; }
+  const row = e.target.closest('.tfile');
+  if (row) { e.preventDefault(); openFile(row.dataset.path); }
 });
 $('#filter').addEventListener('input', (e) => renderTree(e.target.value));
 
@@ -438,7 +449,7 @@ async function openFile(path, line) {
   $('#code').innerHTML = renderCode(file.body, lang);
   $('#outline').innerHTML = `<div class="oh">outline · ${ol.symbols.length} symbols</div>` +
     (ol.symbols.map((s) => { const sym = symbolName(s.text);
-      return `<div class="osym" data-line="${s.line}"><span class="ol">${s.line}</span><span class="ot">${esc(s.text)}</span>${sym ? `<button class="osym-r" data-sym="${esc(sym)}" title="find references to ${esc(sym)}">⇉ refs</button>` : ''}</div>`;
+      return `<div class="osym" data-line="${s.line}" tabindex="0" role="button" aria-label="Jump to line ${s.line}"><span class="ol">${s.line}</span><span class="ot">${esc(s.text)}</span>${sym ? `<button class="osym-r" data-sym="${esc(sym)}" title="find references to ${esc(sym)}" aria-label="Find references to ${esc(sym)}">⇉ refs</button>` : ''}</div>`;
     }).join('') || '<div class="osym" style="color:var(--dim)">no symbols</div>');
   if (line) scrollToLine(line); else $('#code').parentElement.scrollTop = 0;
   collectOutlineSyms(); updateActiveSymbol();          // sync the outline highlight to the scroll position
@@ -457,6 +468,12 @@ $('#outline').addEventListener('click', (e) => {
   const rb = e.target.closest('.osym-r');
   if (rb) { e.stopPropagation(); setMode('refs'); $('#q').value = rb.dataset.sym; runRefs(rb.dataset.sym); return; }
   const s = e.target.closest('[data-line]'); if (s) scrollToLine(+s.dataset.line, true);
+});
+$('#outline').addEventListener('keydown', (e) => {   // keyboard-operable outline (Enter / Space)
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  if (e.target.closest('.osym-r')) return;           // the refs button handles its own key activation
+  const s = e.target.closest('.osym[data-line]');
+  if (s) { e.preventDefault(); scrollToLine(+s.dataset.line, true); }
 });
 function scrollToLine(line, top) {
   const el = document.getElementById('L' + line); if (!el) return;
