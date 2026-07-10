@@ -190,3 +190,13 @@ export function stats() {
     languages: all(`SELECT lang, COUNT(*) n FROM files GROUP BY lang ORDER BY n DESC`),
   };
 }
+
+// Is this path part of the current index? Guards the serve endpoints so
+// outline/read can only touch files lens actually indexed (no path traversal).
+export function isIndexed(path) {
+  return !!get(`SELECT 1 FROM files WHERE path=?`, path);
+}
+
+export function fileMeta(path) {
+  return get(`SELECT path, lang, lines, bytes, indexed_at FROM files WHERE path=?`, path);
+}

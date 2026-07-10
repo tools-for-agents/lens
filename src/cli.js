@@ -5,6 +5,7 @@
 //   lens outline <file>
 //   lens read <file> <start> <end>
 //   lens map | lens stats
+//   lens serve [--port 7900]
 import { indexPath, search, outline, readLines, map, stats } from './core.js';
 
 const [, , cmd, ...rest] = process.argv;
@@ -34,6 +35,9 @@ try {
     out(map());
   } else if (cmd === 'stats') {
     out(stats());
+  } else if (cmd === 'serve') {
+    const { serve } = await import('./server.js');
+    serve({ port: +flag('--port', process.env.LENS_PORT || 7900) });
   } else {
     out(`lens — token-efficient code context for agents
 
@@ -41,7 +45,8 @@ try {
   lens search "<query>" [-k N] [--tokens N] [--glob PAT]
   lens outline <file>               symbol map, no full read
   lens read <file> <start> <end>    surgical line read
-  lens map | lens stats`);
+  lens map | lens stats
+  lens serve [--port 7900]          browsable web explorer`);
   }
 } catch (e) {
   console.error('error:', e.message);

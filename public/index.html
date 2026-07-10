@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>lens · code explorer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⌕</text></svg>" />
+<style>
+  :root {
+    --bg:#0c0e11; --bg-2:#0f1216; --panel:#14181e; --panel-2:#191e26;
+    --line:#232a34; --line-2:#2f3945;
+    --txt:#dfe4ec; --muted:#7d8794; --dim:#59626f;
+    --accent:#4fd6be; --accent-dim:#2b7d70; --amber:#f2c14e;
+    /* syntax */
+    --sx-key:#c792ea; --sx-str:#7fd88f; --sx-com:#5a6472; --sx-num:#f2a06a;
+    --sx-fn:#6fb3ff; --sx-punct:#9aa4b2;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono","Cascadia Code",Menlo,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    /* language colors */
+    --l-javascript:#f7df6b; --l-typescript:#5aa9f8; --l-python:#78c2f3; --l-go:#59d0e0;
+    --l-rust:#e6905a; --l-markdown:#9aa4b2; --l-json:#e8b45a; --l-yaml:#c98be0;
+    --l-css:#6ab8f0; --l-html:#e78a5a; --l-shell:#8fd88f; --l-text:#7d8794; --l-sql:#e0a0d0;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body {
+    background:var(--bg); color:var(--txt); font-family:var(--sans); font-size:13.5px;
+    height:100vh; overflow:hidden; -webkit-font-smoothing:antialiased;
+    display:grid; grid-template-rows:auto 1fr; grid-template-columns:274px 1fr;
+    grid-template-areas:"top top" "rail main";
+  }
+
+  /* ── Top bar ─────────────────────────────────────────────── */
+  .top {
+    grid-area:top; display:flex; align-items:center; gap:16px; padding:0 16px; height:52px;
+    border-bottom:1px solid var(--line); background:var(--bg-2);
+  }
+  .logo { display:flex; align-items:center; gap:10px; }
+  .logo .glyph { font-size:20px; color:var(--accent); text-shadow:0 0 14px rgba(79,214,190,.6); }
+  .logo b { font-family:var(--mono); font-size:15px; letter-spacing:.5px; font-weight:600; }
+  .logo .tag { font-family:var(--mono); font-size:10.5px; color:var(--muted); letter-spacing:.4px; }
+  .search {
+    flex:1; max-width:640px; display:flex; align-items:center; gap:10px; position:relative;
+  }
+  .search .field {
+    flex:1; display:flex; align-items:center; gap:9px; background:var(--panel);
+    border:1px solid var(--line); border-radius:9px; padding:0 12px; height:36px;
+    transition:border-color .15s;
+  }
+  .search .field:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,214,190,.1); }
+  .search .field .ic { color:var(--muted); font-size:14px; }
+  .search input {
+    flex:1; background:none; border:none; outline:none; color:var(--txt);
+    font-family:var(--mono); font-size:13px;
+  }
+  .search input::placeholder { color:var(--dim); }
+  .search .kbd { font-family:var(--mono); font-size:10px; color:var(--dim); border:1px solid var(--line); border-radius:5px; padding:1px 6px; }
+  .budget { font-family:var(--mono); font-size:10.5px; color:var(--muted); white-space:nowrap; min-width:96px; text-align:right; }
+  .budget b { color:var(--accent); font-variant-numeric:tabular-nums; }
+  .top .repo { margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--muted); }
+
+  /* ── Left rail ───────────────────────────────────────────── */
+  .rail { grid-area:rail; border-right:1px solid var(--line); background:var(--bg-2); display:flex; flex-direction:column; overflow:hidden; }
+  .rail .stats { padding:13px 15px; border-bottom:1px solid var(--line); }
+  .st-nums { display:flex; gap:14px; font-family:var(--mono); }
+  .st-nums div b { display:block; font-size:17px; font-variant-numeric:tabular-nums; }
+  .st-nums div span { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.8px; }
+  .langbar { display:flex; height:5px; border-radius:3px; overflow:hidden; margin-top:12px; background:var(--panel); }
+  .langbar i { height:100%; }
+  .langkey { display:flex; flex-wrap:wrap; gap:3px 11px; margin-top:9px; }
+  .langkey span { font-family:var(--mono); font-size:10px; color:var(--muted); display:inline-flex; align-items:center; gap:5px; }
+  .langkey span i { width:8px; height:8px; border-radius:2px; }
+
+  .filter { padding:9px 12px; border-bottom:1px solid var(--line); }
+  .filter input {
+    width:100%; background:var(--panel); border:1px solid var(--line); border-radius:7px;
+    color:var(--txt); font-family:var(--mono); font-size:12px; padding:7px 10px; outline:none;
+  }
+  .filter input:focus { border-color:var(--accent-dim); }
+  .tree { flex:1; overflow:auto; padding:6px 4px 40px; }
+  .tgroup > .tg-head {
+    display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11px; color:var(--muted);
+    padding:5px 10px; cursor:pointer; user-select:none; position:sticky; top:0; background:var(--bg-2); z-index:1;
+  }
+  .tg-head:hover { color:var(--txt); }
+  .tg-head .caret { transition:transform .15s; font-size:9px; color:var(--dim); }
+  .tgroup.collapsed .caret { transform:rotate(-90deg); }
+  .tgroup.collapsed .tg-body { display:none; }
+  .tg-head .tg-n { margin-left:auto; color:var(--dim); }
+  .tfile {
+    display:flex; align-items:center; gap:8px; padding:5px 10px 5px 22px; border-radius:6px;
+    cursor:pointer; font-family:var(--mono); font-size:12px; color:var(--txt); white-space:nowrap;
+  }
+  .tfile:hover { background:var(--panel); }
+  .tfile.active { background:var(--panel-2); box-shadow:inset 2px 0 0 var(--accent); }
+  .tfile .dot { width:8px; height:8px; border-radius:2px; flex:0 0 auto; }
+  .tfile .nm { overflow:hidden; text-overflow:ellipsis; flex:1; }
+  .tfile .ln { color:var(--dim); font-size:10.5px; }
+
+  /* ── Main ────────────────────────────────────────────────── */
+  .main { grid-area:main; overflow:hidden; position:relative; display:flex; flex-direction:column; }
+
+  /* search results */
+  .results { overflow:auto; padding:14px 18px 40px; height:100%; }
+  .res-head { font-family:var(--mono); font-size:11.5px; color:var(--muted); margin-bottom:12px; }
+  .res-head b { color:var(--txt); }
+  .hit {
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-bottom:11px; overflow:hidden;
+    transition:border-color .12s;
+  }
+  .hit:hover { border-color:var(--line-2); }
+  .hit-head {
+    display:flex; align-items:center; gap:10px; padding:9px 13px; cursor:pointer; font-family:var(--mono); font-size:12px;
+    border-bottom:1px solid var(--line); background:var(--panel-2);
+  }
+  .hit-head .p { color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hit-head .p .lno { color:var(--muted); }
+  .hit-head .meta { margin-left:auto; display:flex; gap:10px; color:var(--muted); white-space:nowrap; }
+  .hit-head .meta .sc { color:var(--amber); }
+  .hit pre { margin:0; padding:11px 14px; overflow:auto; font-family:var(--mono); font-size:12px; line-height:1.55; max-height:230px; }
+  mark { background:rgba(242,193,78,.24); color:#ffe6a0; border-radius:2px; padding:0 1px; }
+
+  /* file reader */
+  .reader { display:none; height:100%; grid-template-columns:1fr 220px; overflow:hidden; }
+  .reader.show { display:grid; }
+  .code-wrap { overflow:auto; position:relative; }
+  .code-head {
+    position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:12px; padding:10px 16px;
+    background:var(--bg-2); border-bottom:1px solid var(--line); font-family:var(--mono); font-size:12px;
+  }
+  .code-head .path { color:var(--txt); }
+  .code-head .path .d { color:var(--muted); }
+  .code-head .cm { margin-left:auto; display:flex; gap:12px; color:var(--muted); }
+  .code-head .cm .lang-pill { color:var(--bg); padding:1px 8px; border-radius:20px; font-size:10.5px; font-weight:600; }
+  pre.code { margin:0; font-family:var(--mono); font-size:12.5px; line-height:1.6; padding:8px 0 60px; }
+  .cl { display:flex; }
+  .cl:target, .cl.hl { background:rgba(79,214,190,.09); }
+  .cl .n {
+    flex:0 0 auto; width:52px; text-align:right; padding:0 14px 0 0; color:var(--dim);
+    user-select:none; font-variant-numeric:tabular-nums;
+  }
+  .cl .c { flex:1; white-space:pre; padding-right:20px; }
+  /* syntax */
+  .sx-key { color:var(--sx-key); } .sx-str { color:var(--sx-str); } .sx-com { color:var(--sx-com); font-style:italic; }
+  .sx-num { color:var(--sx-num); } .sx-fn { color:var(--sx-fn); }
+
+  .outline { border-left:1px solid var(--line); background:var(--bg-2); overflow:auto; }
+  .outline .oh { font-family:var(--mono); font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:1px; padding:12px 14px 8px; position:sticky; top:0; background:var(--bg-2); }
+  .osym { display:flex; gap:9px; padding:5px 14px; cursor:pointer; font-family:var(--mono); font-size:11.5px; align-items:baseline; }
+  .osym:hover { background:var(--panel); }
+  .osym .ol { color:var(--dim); min-width:30px; text-align:right; font-variant-numeric:tabular-nums; }
+  .osym .ot { color:var(--txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* empty / welcome */
+  .empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; color:var(--muted); padding:30px; }
+  .empty .big { font-size:44px; color:var(--accent-dim); margin-bottom:12px; }
+  .empty h2 { color:var(--txt); font-weight:600; font-size:18px; margin:0 0 6px; }
+  .empty p { max-width:420px; font-size:13px; line-height:1.6; margin:2px 0; }
+  .empty code { font-family:var(--mono); color:var(--accent); background:var(--panel); padding:1px 6px; border-radius:5px; }
+
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background:var(--line); border-radius:8px; }
+  ::-webkit-scrollbar-thumb:hover { background:var(--line-2); }
+
+  @media (max-width:760px) {
+    body { grid-template-columns:0 1fr; }
+    .rail { display:none; }
+    .reader.show { grid-template-columns:1fr; }
+    .outline { display:none; }
+  }
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="logo">
+      <span class="glyph">⌕</span>
+      <div><b>lens</b> <span class="tag">code explorer</span></div>
+    </div>
+    <div class="search">
+      <div class="field">
+        <span class="ic">⌕</span>
+        <input id="q" placeholder="search the index — functions, strings, symbols…" autocomplete="off" spellcheck="false" />
+        <span class="kbd">/</span>
+      </div>
+      <div class="budget" id="budget"></div>
+    </div>
+    <div class="repo" id="repo"></div>
+  </header>
+
+  <aside class="rail">
+    <div class="stats" id="stats"></div>
+    <div class="filter"><input id="filter" placeholder="filter files…" autocomplete="off" spellcheck="false" /></div>
+    <div class="tree" id="tree"></div>
+  </aside>
+
+  <main class="main">
+    <div class="results" id="results" hidden></div>
+    <div class="reader" id="reader">
+      <div class="code-wrap">
+        <div class="code-head" id="codehead"></div>
+        <pre class="code" id="code"></pre>
+      </div>
+      <div class="outline" id="outline"></div>
+    </div>
+    <div class="empty" id="welcome">
+      <div class="big">⌕</div>
+      <h2>Surgical code retrieval</h2>
+      <p>Pick a file from the tree to read it with its symbol outline, or <b>search</b> the index to pull just the ranked snippets that match — the way an agent reads a repo without burning the whole file.</p>
+      <p style="margin-top:10px"><code>press /</code> to search &nbsp;·&nbsp; every result shows its <code>~token</code> cost</p>
+    </div>
+  </main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const api = (p) => fetch(p).then((r) => r.json());
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const langColor = (l) => getComputedStyle(document.documentElement).getPropertyValue('--l-' + l).trim() || 'var(--l-text)';
+
+let TREE = [], STATS = null, activeFile = null;
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+(async () => {
+  [STATS, TREE] = await Promise.all([api('/api/stats'), api('/api/map').then((m) => m.tree)]);
+  renderStats(); renderTree('');
+  $('#repo').textContent = STATS.files + ' files indexed';
+})();
+
+// ── Stats + language bar ─────────────────────────────────────────────────────
+function renderStats() {
+  const langs = STATS.languages || [];
+  const total = langs.reduce((a, l) => a + l.n, 0) || 1;
+  $('#stats').innerHTML = `
+    <div class="st-nums">
+      <div><b>${STATS.files}</b><span>files</span></div>
+      <div><b>${fmt(STATS.total_lines)}</b><span>lines</span></div>
+      <div><b>${STATS.chunks}</b><span>chunks</span></div>
+    </div>
+    <div class="langbar">${langs.map((l) => `<i style="width:${(l.n / total * 100).toFixed(1)}%;background:${langColor(l.lang)}" title="${l.lang}: ${l.n}"></i>`).join('')}</div>
+    <div class="langkey">${langs.slice(0, 6).map((l) => `<span><i style="background:${langColor(l.lang)}"></i>${l.lang} ${l.n}</span>`).join('')}</div>`;
+}
+const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
+
+// ── File tree (grouped by top-level directory) ──────────────────────────────
+function renderTree(filter) {
+  const f = filter.toLowerCase();
+  const groups = {};
+  for (const file of TREE) {
+    if (f && !file.path.toLowerCase().includes(f)) continue;
+    const parts = file.path.split('/');
+    const dir = parts.length > 1 ? parts[0] + '/' : './';
+    (groups[dir] ||= []).push(file);
+  }
+  const dirs = Object.keys(groups).sort();
+  $('#tree').innerHTML = dirs.map((dir) => {
+    const files = groups[dir].sort((a, b) => a.path.localeCompare(b.path));
+    return `<div class="tgroup${f ? '' : ''}">
+      <div class="tg-head"><span class="caret">▾</span><span>${esc(dir)}</span><span class="tg-n">${files.length}</span></div>
+      <div class="tg-body">${files.map(fileRow).join('')}</div>
+    </div>`;
+  }).join('') || '<div style="padding:20px;color:var(--dim);font-family:var(--mono);font-size:12px">no files match</div>';
+}
+function fileRow(file) {
+  const name = file.path.split('/').pop();
+  return `<div class="tfile${activeFile === file.path ? ' active' : ''}" data-path="${esc(file.path)}" title="${esc(file.path)}">
+    <span class="dot" style="background:${langColor(file.lang)}"></span>
+    <span class="nm">${esc(name)}</span><span class="ln">${file.lines}</span>
+  </div>`;
+}
+$('#tree').addEventListener('click', (e) => {
+  const head = e.target.closest('.tg-head');
+  if (head) { head.parentElement.classList.toggle('collapsed'); return; }
+  const row = e.target.closest('.tfile');
+  if (row) openFile(row.dataset.path);
+});
+$('#filter').addEventListener('input', (e) => renderTree(e.target.value));
+
+// ── Open a file: reader + outline ───────────────────────────────────────────
+async function openFile(path, line) {
+  activeFile = path;
+  document.querySelectorAll('.tfile').forEach((el) => el.classList.toggle('active', el.dataset.path === path));
+  $('#results').hidden = true; $('#welcome').style.display = 'none';
+  $('#reader').classList.add('show');
+  const meta = TREE.find((t) => t.path === path) || {};
+  const [file, ol] = await Promise.all([
+    api('/api/read?path=' + encodeURIComponent(path) + '&start=1&end=' + (meta.lines || 4000)),
+    api('/api/outline?path=' + encodeURIComponent(path)),
+  ]);
+  const lang = (file.meta && file.meta.lang) || meta.lang || 'text';
+  $('#codehead').innerHTML = `
+    <span class="path">${dirfmt(path)}</span>
+    <span class="cm">
+      <span>${file.total_lines} lines</span>
+      <span>~${file.tokens} tok</span>
+      <span class="lang-pill" style="background:${langColor(lang)}">${lang}</span>
+    </span>`;
+  $('#code').innerHTML = renderCode(file.body, lang);
+  $('#outline').innerHTML = `<div class="oh">outline · ${ol.symbols.length} symbols</div>` +
+    (ol.symbols.map((s) => `<div class="osym" data-line="${s.line}"><span class="ol">${s.line}</span><span class="ot">${esc(s.text)}</span></div>`).join('')
+      || '<div class="osym" style="color:var(--dim)">no symbols</div>');
+  if (line) scrollToLine(line); else $('#code').parentElement.scrollTop = 0;
+}
+function dirfmt(path) {
+  const parts = path.split('/'); const name = parts.pop();
+  return (parts.length ? `<span class="d">${esc(parts.join('/'))}/</span>` : '') + esc(name);
+}
+$('#outline').addEventListener('click', (e) => {
+  const s = e.target.closest('[data-line]'); if (s) scrollToLine(+s.dataset.line);
+});
+function scrollToLine(line) {
+  const el = document.getElementById('L' + line); if (!el) return;
+  document.querySelectorAll('.cl.hl').forEach((x) => x.classList.remove('hl'));
+  el.classList.add('hl'); el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+// ── Code rendering: parse "N\tline" body, number + highlight ─────────────────
+function renderCode(body, lang) {
+  const lines = body.split('\n');
+  let out = '';
+  for (const raw of lines) {
+    const tab = raw.indexOf('\t');
+    const n = tab >= 0 ? raw.slice(0, tab) : '';
+    const text = tab >= 0 ? raw.slice(tab + 1) : raw;
+    out += `<div class="cl" id="L${n}"><span class="n">${n}</span><span class="c">${highlight(text, lang)}</span></div>`;
+  }
+  return out;
+}
+
+// ── Lightweight zero-dep syntax highlighter ─────────────────────────────────
+const KEYWORDS = {
+  javascript:'const let var function return if else for while class extends new import export from default async await try catch finally throw typeof instanceof of in do switch case break continue this super yield static get set null true false undefined void delete'.split(' '),
+  python:'def class return if elif else for while import from as try except finally raise with lambda yield global nonlocal pass break continue and or not in is None True False async await self'.split(' '),
+  go:'func package import type struct interface map chan go defer return if else for range switch case break continue var const nil true false make new'.split(' '),
+  rust:'fn let mut pub struct enum trait impl mod use match if else for while loop return self Self as ref move async await dyn where const static true false Some None Ok Err'.split(' '),
+  json:[], text:[], markdown:[], yaml:'true false null'.split(' '), sql:'select from where join on group by order limit insert update delete create table view index into values as and or not null'.split(' '),
+};
+KEYWORDS.typescript = KEYWORDS.javascript.concat('interface type enum namespace declare readonly public private protected implements keyof'.split(' '));
+KEYWORDS.c = KEYWORDS.cpp = 'int char void float double return if else for while struct class public private include define const static new delete true false null nullptr auto'.split(' ');
+KEYWORDS.java = KEYWORDS.cpp;
+KEYWORDS.css = [];
+KEYWORDS.shell = 'if then else fi for do done while case esac function return export local echo cd'.split(' ');
+
+function highlight(text, lang) {
+  const kws = KEYWORDS[lang] || KEYWORDS.javascript;
+  // tokenizer: comments, strings, numbers, identifiers, other — HTML-escaped per token
+  const re = /(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\b\d[\d_.]*\b)|([A-Za-z_$][\w$]*)|([^\w\s]+|\s+)/g;
+  let out = '', m;
+  const lineComment = (lang === 'python' || lang === 'shell' || lang === 'yaml') ? '#' : '//';
+  while ((m = re.exec(text))) {
+    if (m[1]) { // comment — only treat # as comment for #-comment langs
+      if (m[1][0] === '#' && lineComment !== '#') { out += esc(m[1]); }
+      else out += `<span class="sx-com">${esc(m[1])}</span>`;
+    } else if (m[2]) out += `<span class="sx-str">${esc(m[2])}</span>`;
+    else if (m[3]) out += `<span class="sx-num">${esc(m[3])}</span>`;
+    else if (m[4]) {
+      if (kws.includes(m[4])) out += `<span class="sx-key">${esc(m[4])}</span>`;
+      else if (text[re.lastIndex] === '(') out += `<span class="sx-fn">${esc(m[4])}</span>`;
+      else out += esc(m[4]);
+    } else out += esc(m[5] || '');
+  }
+  return out || '&nbsp;';
+}
+
+// ── Search ──────────────────────────────────────────────────────────────────
+let searchTimer;
+$('#q').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (!q) { $('#results').hidden = true; $('#budget').textContent = ''; if (!activeFile) $('#welcome').style.display = ''; return; }
+  searchTimer = setTimeout(() => runSearch(q), 180);
+});
+$('#q').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); $('#results').hidden = true; $('#budget').textContent = ''; } });
+
+async function runSearch(q) {
+  const r = await api('/api/search?k=12&q=' + encodeURIComponent(q));
+  $('#welcome').style.display = 'none'; $('#reader').classList.remove('show');
+  $('#results').hidden = false;
+  $('#budget').innerHTML = r.count ? `<b>${r.count}</b> hits · <b>~${r.tokens}</b> tok` : '';
+  const terms = (q.match(/[A-Za-z0-9_]+/g) || []).filter((t) => t.length > 1);
+  $('#results').innerHTML = r.count
+    ? `<div class="res-head"><b>${r.count}</b> snippets for “${esc(q)}” — pulled in <b>~${r.tokens}</b> tokens (budget-ranked by bm25)</div>` +
+      r.results.map((x) => hitCard(x, terms)).join('')
+    : `<div class="res-head">No matches for “${esc(q)}”. Try a symbol name or a string that appears in the code.</div>`;
+}
+function hitCard(x, terms) {
+  return `<div class="hit" data-path="${esc(x.path)}" data-line="${x.start}">
+    <div class="hit-head">
+      <span class="p">${dirfmt(x.path)}<span class="lno">:${x.start}-${x.end}</span></span>
+      <span class="meta"><span class="lang">${x.lang}</span><span class="sc">score ${x.score}</span><span>~${x.tokens} tok</span></span>
+    </div>
+    <pre>${highlightWithTerms(x.body, x.lang, terms)}</pre>
+  </div>`;
+}
+function highlightWithTerms(body, lang, terms) {
+  // highlight syntax first, then wrap matched terms in <mark> on the text nodes
+  let html = highlight(body, lang);
+  if (terms.length) {
+    const re = new RegExp('(' + terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+    html = html.replace(/>([^<]+)</g, (whole, txt) => '>' + txt.replace(re, '<mark>$1</mark>') + '<');
+  }
+  return html;
+}
+$('#results').addEventListener('click', (e) => {
+  const hit = e.target.closest('.hit'); if (hit) openFile(hit.dataset.path, +hit.dataset.line);
+});
+
+// ── Keyboard: "/" focuses search ────────────────────────────────────────────
+addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement.tagName !== 'INPUT') { e.preventDefault(); $('#q').focus(); }
+});
+</script>
+</body>
+</html>

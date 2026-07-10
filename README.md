@@ -26,9 +26,24 @@ node src/cli.js search "websocket reconnect" -k 6 --tokens 1500 --glob 'src/*'
 node src/cli.js outline src/server.js         # symbol map, no full read
 node src/cli.js read src/server.js 40 80      # surgical line range
 node src/cli.js stats                         # index stats
+node src/cli.js serve                         # browsable web explorer → :7900
 ```
 
 Index location is `./.lens/index.db` (override with `LENS_DB`).
+
+## Web explorer (`lens serve`)
+
+```bash
+node src/cli.js index .        # index the repo you're in
+node src/cli.js serve          # → http://localhost:7900  (--port to change)
+```
+
+A zero-dependency, IDE-style explorer for the same index the agent queries — so a human can see what `lens` sees:
+
+- **FTS search** across the repo, ranked by bm25, with each snippet's **`~token` cost** and matched terms highlighted — the token-budgeted view an agent gets.
+- **File tree** grouped by directory with a language-distribution bar.
+- **Syntax-highlighted reader** with line numbers and a live **symbol outline** (click a symbol to jump).
+- Read-only; `outline`/`read` are guarded to indexed paths (no traversal).
 
 ## MCP server (for agents)
 

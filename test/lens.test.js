@@ -61,3 +61,23 @@ test('empty query returns no results, not an error', () => {
   const r = lens.search('   ');
   assert.equal((r.results || []).length, 0);
 });
+
+test('serve: HTTP endpoints expose the index and guard path traversal', async () => {
+  const { createLensServer } = await import('../src/server.js');
+  const server = createLensServer();
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://localhost:${server.address().port}`;
+  try {
+    const stats = await fetch(base + '/api/stats').then((r) => r.json());
+    assert.ok(stats.files >= 2, 'stats reports indexed files');
+
+    const hits = await fetch(base + '/api/search?q=parseAuthHeader').then((r) => r.json());
+    assert.ok(hits.results.some((x) => /parseAuthHeader/.test(x.body)), 'search returns the symbol');
+
+    const guard = await fetch(base + '/api/read?path=' + encodeURIComponent('../../etc/passwd')).then((r) => r.json());
+    assert.equal(guard.error, 'path not in index', 'read rejects non-indexed / traversal paths');
+
+    const notFound = await fetch(base + '/api/nope');
+    assert.equal(notFound.status, 200, 'unknown paths fall through to the SPA, not a crash');
+  } finally { server.close(); }
+});
