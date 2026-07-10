@@ -62,6 +62,18 @@ test('empty query returns no results, not an error', () => {
   assert.equal((r.results || []).length, 0);
 });
 
+test('map exposes per-file size + a token estimate (drives the tree weight bar)', () => {
+  const m = lens.map();
+  assert.ok(Array.isArray(m.tree) && m.tree.length >= 2, 'the tree lists files');
+  for (const f of m.tree) {
+    assert.ok(typeof f.lines === 'number' && f.lines > 0, 'each file has a line count');
+    assert.ok(typeof f.bytes === 'number' && f.bytes > 0, 'each file has a byte size');
+    assert.equal(f.tokens, Math.ceil(f.bytes / 4), 'tokens is the ≈4-chars/token estimate of bytes');
+  }
+  // the bar scales to the heaviest file, so the max must be positive
+  assert.ok(Math.max(...m.tree.map((f) => f.tokens)) > 0, 'there is a heaviest file to scale against');
+});
+
 test('references finds every line that mentions a symbol, grouped by file', () => {
   const r = lens.references('req');
   assert.ok(r.count >= 2, 'req appears on at least two lines');

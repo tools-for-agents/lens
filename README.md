@@ -44,7 +44,7 @@ node src/cli.js serve          # → http://localhost:7900  (--port to change)
 A zero-dependency, IDE-style explorer for the same index the agent queries — so a human can see what `lens` sees:
 
 - **FTS search** across the repo, ranked by bm25, with each snippet's **`~token` cost** and matched terms highlighted — the token-budgeted view an agent gets.
-- **File tree** grouped by directory with a language-distribution bar.
+- **File tree** grouped by directory with a language-distribution bar, and a per-file **token-weight bar** (scaled to the heaviest file) so the pages that are expensive to read whole stand out at a glance — hover any file for its exact `~token` cost. Reading the right lines instead of the whole file is the point of `lens`, and the tree now shows you where that matters most.
 - **Recent files** — the files you've opened surface as clickable chips above the tree (remembered in the browser only, most-recent first); jump back to one in a click, or **clear ✕** to forget them.
 - **Syntax-highlighted reader** with line numbers and a live **symbol outline** that **tracks your scroll** — the symbol you're currently reading stays highlighted, and clicking one jumps to it (or ⇉ to find its references).
 - **Jump to symbol** — hit `⌘⇧O` (or the **⤳ jump** button on the outline) for a quick-nav palette over the open file: type to fuzzy-filter its symbols (matches highlighted), `↑`/`↓` to move, `Enter` to fly to one, `Esc` to dismiss — the same jump-to-symbol muscle memory as your editor, in the browser.

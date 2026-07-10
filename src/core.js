@@ -212,7 +212,10 @@ export function readLines(path, start = 1, end) {
 
 // ── Repo map + stats ──────────────────────────────────────────────────────────
 export function map({ limit = 400 } = {}) {
-  const rows = all(`SELECT path, lang, lines FROM files ORDER BY path LIMIT ?`, limit);
+  const rows = all(`SELECT path, lang, lines, bytes FROM files ORDER BY path LIMIT ?`, limit);
+  // token estimate per file (≈4 chars/token, same ratio as estTokens) — the web
+  // tree sizes a weight bar by it so heavy-to-read files stand out
+  for (const r of rows) r.tokens = Math.ceil((r.bytes || 0) / 4);
   const byLang = {};
   for (const r of rows) byLang[r.lang] = (byLang[r.lang] || 0) + 1;
   return { files: rows.length, by_lang: byLang, tree: rows };
