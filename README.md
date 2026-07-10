@@ -47,6 +47,7 @@ A zero-dependency, IDE-style explorer for the same index the agent queries — s
 - **File tree** grouped by directory with a language-distribution bar.
 - **Syntax-highlighted reader** with line numbers and a live **symbol outline** (click a symbol to jump, or ⇉ to find its references).
 - **Find references** — flip the search to `⇉ refs` mode (or hit ⇉ on an outline symbol) to list every line across the repo that mentions a symbol, grouped by file; click a line to open it.
+- **Light or dark** — a ◐ toggle (remembered per browser; follows your OS preference by default), with a syntax palette tuned for each.
 - Read-only; `outline`/`read` are guarded to indexed paths (no traversal).
 
 ## MCP server (for agents)

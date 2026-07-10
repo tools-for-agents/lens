@@ -21,6 +21,30 @@
     --l-rust:#e6905a; --l-markdown:#9aa4b2; --l-json:#e8b45a; --l-yaml:#c98be0;
     --l-css:#6ab8f0; --l-html:#e78a5a; --l-shell:#8fd88f; --l-text:#7d8794; --l-sql:#e0a0d0;
   }
+  /* light ("day") theme — applied by the toggle or by an OS light preference.
+     Kept in sync in two places: the explicit [data-theme=light] and the media query. */
+  :root[data-theme="light"] {
+    --bg:#f5f7fa; --bg-2:#eaeef2; --panel:#ffffff; --panel-2:#eff3f7;
+    --line:#d5dbe1; --line-2:#c0c9d2;
+    --txt:#1f2328; --muted:#59616b; --dim:#8b949e;
+    --accent:#0e8f80; --accent-dim:#7ecbc0; --amber:#8a5d00;
+    --sx-key:#a626a4; --sx-str:#3f9a4e; --sx-com:#9ca3af; --sx-num:#986801; --sx-fn:#3a6df0; --sx-punct:#383a42;
+    --l-javascript:#c7a300; --l-typescript:#2f7fe0; --l-python:#2f86c4; --l-go:#0f9bb0; --l-rust:#c26a2a;
+    --l-markdown:#6b7280; --l-json:#bd8a1e; --l-yaml:#9a5fc0; --l-css:#2f88d0; --l-html:#d26a30;
+    --l-shell:#3f9a4e; --l-text:#6b7280; --l-sql:#b060a0;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg:#f5f7fa; --bg-2:#eaeef2; --panel:#ffffff; --panel-2:#eff3f7;
+      --line:#d5dbe1; --line-2:#c0c9d2;
+      --txt:#1f2328; --muted:#59616b; --dim:#8b949e;
+      --accent:#0e8f80; --accent-dim:#7ecbc0; --amber:#8a5d00;
+      --sx-key:#a626a4; --sx-str:#3f9a4e; --sx-com:#9ca3af; --sx-num:#986801; --sx-fn:#3a6df0; --sx-punct:#383a42;
+      --l-javascript:#c7a300; --l-typescript:#2f7fe0; --l-python:#2f86c4; --l-go:#0f9bb0; --l-rust:#c26a2a;
+      --l-markdown:#6b7280; --l-json:#bd8a1e; --l-yaml:#9a5fc0; --l-css:#2f88d0; --l-html:#d26a30;
+      --l-shell:#3f9a4e; --l-text:#6b7280; --l-sql:#b060a0;
+    }
+  }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; }
   body {
@@ -119,6 +143,11 @@
   .hit-head .meta .sc { color:var(--amber); }
   .hit pre { margin:0; padding:11px 14px; overflow:auto; font-family:var(--mono); font-size:12px; line-height:1.55; max-height:230px; }
   mark { background:rgba(242,193,78,.24); color:#ffe6a0; border-radius:2px; padding:0 1px; }
+  :root[data-theme="light"] mark { background:rgba(255,196,45,.5); color:#5c4200; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) mark { background:rgba(255,196,45,.5); color:#5c4200; } }
+  /* theme toggle button */
+  .theme-btn { flex:0 0 auto; background:var(--panel); border:1px solid var(--line); color:var(--muted); width:34px; height:34px; border-radius:9px; cursor:pointer; font-size:15px; display:grid; place-items:center; }
+  .theme-btn:hover { color:var(--accent); border-color:var(--accent); }
 
   /* search / refs mode toggle */
   .mode { display:flex; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:2px; flex:0 0 auto; }
@@ -197,6 +226,8 @@
 .xtk a{opacity:.62;transition:opacity .12s,text-shadow .12s;}
 .xtk a:hover{opacity:1;text-shadow:0 0 10px var(--x);}
 .xtk .cur{font-weight:700;}
+:root[data-theme="light"] .xtk{background:rgba(255,255,255,.9);border-color:#d5dbe1;}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]) .xtk{background:rgba(255,255,255,.9);border-color:#d5dbe1;}}
 </style>
 </head>
 <body>
@@ -218,6 +249,7 @@
       <div class="budget" id="budget"></div>
     </div>
     <div class="repo" id="repo"></div>
+    <button class="theme-btn" id="theme" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
   </header>
 
   <aside class="rail">
@@ -248,6 +280,19 @@ const $ = (s) => document.querySelector(s);
 const api = (p) => fetch(p).then((r) => r.json());
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 const langColor = (l) => getComputedStyle(document.documentElement).getPropertyValue('--l-' + l).trim() || 'var(--l-text)';
+
+// ── Theme (light / dark) ─────────────────────────────────────────────────────
+(function initTheme() {
+  const saved = localStorage.getItem('lens:theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+$('#theme').addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const dark = cur ? cur === 'dark' : !matchMedia('(prefers-color-scheme: light)').matches;
+  const next = dark ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('lens:theme', next);
+});
 
 let TREE = [], STATS = null, activeFile = null, mode = 'search';
 
