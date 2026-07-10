@@ -214,6 +214,8 @@
   .osym:hover { background:var(--panel); }
   .osym .ol { color:var(--dim); min-width:30px; text-align:right; font-variant-numeric:tabular-nums; }
   .osym .ot { color:var(--txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .osym.cur { background:var(--panel-2); box-shadow:inset 2px 0 0 var(--accent); }
+  .osym.cur .ol, .osym.cur .ot { color:var(--accent); }
 
   /* empty / welcome */
   .empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; color:var(--muted); padding:30px; }
@@ -439,6 +441,7 @@ async function openFile(path, line) {
       return `<div class="osym" data-line="${s.line}"><span class="ol">${s.line}</span><span class="ot">${esc(s.text)}</span>${sym ? `<button class="osym-r" data-sym="${esc(sym)}" title="find references to ${esc(sym)}">⇉ refs</button>` : ''}</div>`;
     }).join('') || '<div class="osym" style="color:var(--dim)">no symbols</div>');
   if (line) scrollToLine(line); else $('#code').parentElement.scrollTop = 0;
+  collectOutlineSyms(); updateActiveSymbol();          // sync the outline highlight to the scroll position
 }
 function dirfmt(path) {
   const parts = path.split('/'); const name = parts.pop();
@@ -453,13 +456,44 @@ function symbolName(text) {
 $('#outline').addEventListener('click', (e) => {
   const rb = e.target.closest('.osym-r');
   if (rb) { e.stopPropagation(); setMode('refs'); $('#q').value = rb.dataset.sym; runRefs(rb.dataset.sym); return; }
-  const s = e.target.closest('[data-line]'); if (s) scrollToLine(+s.dataset.line);
+  const s = e.target.closest('[data-line]'); if (s) scrollToLine(+s.dataset.line, true);
 });
-function scrollToLine(line) {
+function scrollToLine(line, top) {
   const el = document.getElementById('L' + line); if (!el) return;
   document.querySelectorAll('.cl.hl').forEach((x) => x.classList.remove('hl'));
-  el.classList.add('hl'); el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.add('hl');
+  if (top) {   // align to the top (below the sticky head) so the clicked symbol becomes the current one
+    $('#code').parentElement.scrollTo({ top: el.offsetTop - ($('#codehead').offsetHeight || 40) - 6, behavior: 'smooth' });
+  } else {     // center (used by cross-tool deep-links, where surrounding context helps)
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
 }
+
+// ── Active-symbol scroll-sync: highlight the outline symbol you're currently reading ──
+let outlineSyms = [], clRAF = 0;
+function collectOutlineSyms() {
+  outlineSyms = [...document.querySelectorAll('#outline .osym[data-line]')]
+    .map((el) => ({ line: +el.dataset.line, el })).sort((a, b) => a.line - b.line);
+}
+function updateActiveSymbol() {
+  if (!outlineSyms.length) return;
+  const wrap = $('#code').parentElement;                       // .code-wrap (the scroll container)
+  const top = wrap.scrollTop + ($('#codehead').offsetHeight || 40) + 8;   // clear the sticky code-head
+  let active = outlineSyms[0];
+  for (const s of outlineSyms) {
+    const ln = document.getElementById('L' + s.line); if (!ln) continue;
+    if (ln.offsetTop <= top) active = s; else break;
+  }
+  let changed = false;
+  for (const s of outlineSyms) { const on = s === active; if (s.el.classList.contains('cur') !== on) { s.el.classList.toggle('cur', on); changed = true; } }
+  if (changed) {                                                // keep the active symbol visible in the outline
+    const op = $('#outline'), ar = active.el.getBoundingClientRect(), pr = op.getBoundingClientRect();
+    if (ar.top < pr.top + 34 || ar.bottom > pr.bottom - 6) active.el.scrollIntoView({ block: 'nearest' });
+  }
+}
+$('#code').parentElement.addEventListener('scroll', () => {
+  if (clRAF) return; clRAF = requestAnimationFrame(() => { clRAF = 0; updateActiveSymbol(); });
+});
 
 // ── Code rendering: parse "N\tline" body, number + highlight ─────────────────
 function renderCode(body, lang) {
