@@ -216,6 +216,34 @@
   .ch-btn.brain:hover, .ch-btn.brain.done { color:#a78bfa; border-color:#a78bfa; background:color-mix(in srgb,#a78bfa 12%,var(--panel-2)); }
   .ch-btn:disabled { opacity:.65; cursor:default; }
   .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+
+  /* ── Treemap: where the repo's tokens actually are ── */
+  .tmap { display:flex; flex-direction:column; height:100%; overflow:hidden; }
+  .tmap[hidden] { display:none; }
+  .tm-head { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line);
+    background:var(--bg-2); font-family:var(--mono); font-size:11.5px; color:var(--muted); }
+  .tm-head b { color:var(--txt); font-variant-numeric:tabular-nums; }
+  .tm-head .hint { margin-left:auto; color:var(--dim); font-size:10.5px; }
+  .tm-canvas { flex:1; position:relative; margin:12px; }
+  .tm-dir { position:absolute; border:1px solid var(--line-2); border-radius:7px; overflow:hidden; background:var(--panel); }
+  .tm-dir > .dh { position:absolute; top:0; left:0; right:0; height:17px; padding:0 7px; font-family:var(--mono);
+    font-size:9.5px; line-height:17px; color:var(--muted); background:var(--bg-2); border-bottom:1px solid var(--line);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tm-file { position:absolute; border-radius:4px; cursor:pointer; overflow:hidden;
+    display:flex; align-items:center; justify-content:center; transition:filter .1s, outline-color .1s;
+    outline:1.5px solid transparent; outline-offset:-1.5px;
+    box-shadow:inset 0 0 0 1px var(--panel); }   /* the gap is drawn, not subtracted — area stays honest */
+  .tm-file:hover { filter:brightness(1.35); outline-color:var(--txt); z-index:2; }
+  .tm-file.active { outline-color:var(--accent); }
+  .tm-file .nm { font-family:var(--mono); font-size:9.5px; color:#0c0e11; padding:0 3px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; font-weight:600; }
+  :root[data-theme="light"] .tm-file .nm { color:#0c0e11; }
+  .tm-tip { position:fixed; z-index:40; pointer-events:none; background:var(--panel); border:1px solid var(--line-2);
+    border-radius:8px; padding:7px 10px; box-shadow:0 8px 24px rgba(0,0,0,.35); font-family:var(--mono); font-size:11px;
+    white-space:nowrap; display:none; }
+  .tm-tip .p { color:var(--txt); }
+  .tm-tip .m { color:var(--muted); margin-top:3px; }
+  .tm-tip .m b { color:var(--accent); }
   pre.code { margin:0; font-family:var(--mono); font-size:12.5px; line-height:1.6; padding:8px 0 60px; }
   .cl { display:flex; }
   .cl:target, .cl.hl { background:rgba(79,214,190,.09); }
@@ -299,6 +327,7 @@
       <div class="mode" id="mode">
         <button data-m="search" class="on" title="Ranked snippet search">⌕ search</button>
         <button data-m="refs" title="Find every line that mentions a symbol">⇉ refs</button>
+        <button data-m="map" title="Treemap: where the repo's tokens actually are">◱ map</button>
       </div>
       <div class="field">
         <span class="ic">⌕</span>
@@ -320,6 +349,7 @@
 
   <main class="main">
     <div class="results" id="results" hidden></div>
+    <div class="tmap" id="tmap" hidden><div class="tm-head" id="tmHead"></div><div class="tm-canvas" id="tmCanvas"></div></div>
     <div class="reader" id="reader">
       <div class="code-wrap">
         <div class="code-head" id="codehead"></div>
@@ -486,6 +516,8 @@ async function openFile(path, line) {
   pushRecentFile(path);                  // remember it in the recent-files strip
   document.querySelectorAll('.tfile').forEach((el) => el.classList.toggle('active', el.dataset.path === path));
   $('#results').hidden = true; $('#welcome').style.display = 'none';
+  if (mode === 'map') setMode('search');     // reading a file leaves the map, wherever it was opened from
+  $('#tmap').hidden = true;
   $('#reader').classList.add('show');
   const meta = TREE.find((t) => t.path === path) || {};
   const [file, ol] = await Promise.all([
@@ -823,14 +855,163 @@ $('#q').addEventListener('input', (e) => {
 $('#q').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); $('#results').hidden = true; $('#budget').textContent = ''; } });
 
 // search ⇄ refs mode
+// ── Treemap: where the repo's tokens actually are ───────────────────────────
+// The whole point of lens is not reading files whole. The tree tells you a file
+// is heavy; the treemap tells you where the repo's MASS is — area is ~tokens,
+// grouped by directory, coloured by language. The big rectangles are the ones you
+// must never read whole.
+
+// Squarified treemap (Bruls/Huizing/van Wijk): lay items out in rows along the
+// short side, keeping rectangles as square as possible so areas stay comparable.
+function squarify(items, x, y, w, h) {
+  const out = [];
+  const total = items.reduce((a, i) => a + i.value, 0);
+  if (!total || w <= 0 || h <= 0) return out;
+  let scale = (w * h) / total;                       // value → area
+  const queue = items.map((i) => ({ ...i, area: i.value * scale }));
+
+  const worst = (row, len) => {
+    const sum = row.reduce((a, r) => a + r.area, 0);
+    const max = Math.max(...row.map((r) => r.area)), min = Math.min(...row.map((r) => r.area));
+    const s2 = sum * sum, l2 = len * len;
+    return Math.max((l2 * max) / s2, s2 / (l2 * min));
+  };
+
+  let cx = x, cy = y, cw = w, ch = h;
+  while (queue.length) {
+    const vertical = cw >= ch;                       // lay the row along the shorter side
+    const len = vertical ? ch : cw;
+    const row = [queue.shift()];
+    while (queue.length && worst(row, len) >= worst([...row, queue[0]], len)) row.push(queue.shift());
+
+    const sum = row.reduce((a, r) => a + r.area, 0);
+    const thick = sum / len;                         // row depth
+    let off = vertical ? cy : cx;
+    for (const r of row) {
+      const side = r.area / thick;
+      out.push(vertical
+        ? { ...r, x: cx, y: off, w: thick, h: side }
+        : { ...r, x: off, y: cy, w: side, h: thick });
+      off += side;
+    }
+    if (vertical) { cx += thick; cw -= thick; } else { cy += thick; ch -= thick; }
+    if (cw < 0.5 || ch < 0.5) break;
+  }
+  return out;
+}
+
+const dirOf = (p) => { const i = p.lastIndexOf('/'); return i < 0 ? './' : p.slice(0, i) + '/'; };
+const TM_PAD = 3, TM_HEAD = 17;
+const tmHeadOf = (h) => (h > TM_HEAD * 5 ? TM_HEAD : 0);   // a header on a short box would eat its area
+const tmChrome = (r) => {
+  const head = tmHeadOf(r.h);
+  return r.w * r.h - Math.max(0, r.w - TM_PAD * 2) * Math.max(0, r.h - head - TM_PAD * 2);
+};
+
+// A directory's chrome (its header and padding) is a FIXED cost, so a small
+// directory loses a far bigger share of its box to it than a large one — and its
+// files would then look lighter than they are. That is the one lie a treemap must
+// not tell. So: lay out, measure each box's chrome, re-allocate with it
+// compensated, and settle. A few passes converge, and a file's area then means the
+// same thing everywhere on the map.
+function layoutDirs(groups, W, H) {
+  const totalTok = groups.reduce((a, g) => a + g.value, 0) || 1;
+  const scale = (W * H) / totalTok;                       // px² per token
+  let placed = squarify(groups, 0, 0, W, H);
+  for (let pass = 0; pass < 3; pass++) {
+    const compensated = placed.map((r) => ({ ...r, value: r.value + tmChrome(r) / scale }));
+    placed = squarify(compensated, 0, 0, W, H).map((r, i) => ({ ...r, value: placed[i] ? placed[i].value : r.value, name: r.name, files: r.files }));
+  }
+  return placed;
+}
+
+function renderTreemap() {
+  const cv = $('#tmCanvas');
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if (!W || !H || !TREE.length) return;
+
+  // group by directory; a directory's weight is the sum of its files'
+  const dirs = {};
+  for (const f of TREE) {
+    const d = dirOf(f.path);
+    (dirs[d] ||= { name: d, value: 0, files: [] });
+    dirs[d].value += f.tokens || 0;
+    dirs[d].files.push({ ...f, value: f.tokens || 0 });
+  }
+  const groups = Object.values(dirs).filter((d) => d.value > 0).sort((a, b) => b.value - a.value);
+  const total = groups.reduce((a, d) => a + d.value, 0);
+
+  const PAD = TM_PAD;
+  let html = '';
+  for (const g of layoutDirs(groups, W, H)) {
+    const head = tmHeadOf(g.h);                      // the name lives in the tooltip when the box is too short for a header
+    const iw = g.w - PAD * 2, ih = g.h - head - PAD * 2;
+    html += `<div class="tm-dir" style="left:${g.x}px;top:${g.y}px;width:${g.w}px;height:${g.h}px" title="${esc(g.name)} · ~${fmt(g.value)} tok">
+      ${head ? `<div class="dh">${esc(g.name)} · ${fmt(g.value)}</div>` : ''}`;
+    if (iw > 6 && ih > 6) {
+      const files = g.files.sort((a, b) => b.value - a.value);
+      for (const f of squarify(files, PAD, head + PAD, iw, ih)) {
+        const label = f.w > 42 && f.h > 13 ? `<span class="nm">${esc(f.path.split('/').pop())}</span>` : '';
+        html += `<div class="tm-file${activeFile === f.path ? ' active' : ''}" data-path="${esc(f.path)}"
+          data-tokens="${f.tokens || 0}" data-lines="${f.lines || 0}" data-lang="${esc(f.lang || '')}"
+          style="left:${f.x}px;top:${f.y}px;width:${f.w}px;height:${f.h}px;background:${langColor(f.lang)}"
+          role="button" tabindex="0" title="${esc(f.path)} · ~${f.tokens} tok">${label}</div>`;
+      }
+    }
+    html += '</div>';
+  }
+  cv.innerHTML = html;
+  $('#tmHead').innerHTML = `<span><b>${fmt(total)}</b> tokens across <b>${TREE.length}</b> files</span>
+    <span>heaviest dir <b>${esc(groups[0]?.name || '—')}</b> (${Math.round((groups[0]?.value || 0) / total * 100)}%)</span>
+    <span class="hint">area ≈ tokens · click to open · these are the files never to read whole</span>`;
+}
+
+// hover detail — the tooltip is the point of a treemap you can't label everywhere
+const tmTip = document.createElement('div');
+tmTip.className = 'tm-tip';
+document.body.appendChild(tmTip);
+$('#tmCanvas').addEventListener('mousemove', (e) => {
+  const f = e.target.closest('.tm-file');
+  if (!f) { tmTip.style.display = 'none'; return; }
+  tmTip.innerHTML = `<div class="p">${esc(f.dataset.path)}</div>
+    <div class="m"><b>~${fmt(+f.dataset.tokens)}</b> tok · ${f.dataset.lines} lines · ${esc(f.dataset.lang)}</div>`;
+  tmTip.style.display = 'block';
+  tmTip.style.left = Math.min(e.clientX + 14, innerWidth - tmTip.offsetWidth - 8) + 'px';
+  tmTip.style.top = Math.min(e.clientY + 16, innerHeight - tmTip.offsetHeight - 8) + 'px';
+});
+$('#tmCanvas').addEventListener('mouseleave', () => { tmTip.style.display = 'none'; });
+$('#tmCanvas').addEventListener('click', (e) => {
+  const f = e.target.closest('.tm-file'); if (!f) return;
+  tmTip.style.display = 'none';
+  setMode('search');                       // opening a file leaves the map
+  openFile(f.dataset.path);
+});
+$('#tmCanvas').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const f = e.target.closest('.tm-file'); if (!f) return;
+  e.preventDefault(); setMode('search'); openFile(f.dataset.path);
+});
+addEventListener('resize', () => { if (mode === 'map') renderTreemap(); });
+
 function setMode(m) {
   mode = m;
   document.querySelectorAll('#mode button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
   $('#q').placeholder = m === 'refs' ? 'find references — a symbol name…' : 'search the index — functions, strings, symbols…';
+  const map = m === 'map';
+  $('#tmap').hidden = !map;
+  if (map) {                                // the map owns the pane while it is up
+    $('#results').hidden = true;
+    $('#reader').classList.remove('show');
+    $('#welcome').style.display = 'none';
+    requestAnimationFrame(renderTreemap);   // measure the pane only once it is laid out
+  } else if (!activeFile && !$('#results').innerHTML) {
+    $('#welcome').style.display = '';
+  }
 }
 $('#mode').addEventListener('click', (e) => {
   const b = e.target.closest('[data-m]'); if (!b) return;
   setMode(b.dataset.m);
+  if (mode === 'map') return;               // the map isn't a query
   const q = $('#q').value.trim();
   if (q) (mode === 'refs' ? runRefs(q) : runSearch(q)); else $('#q').focus();
 });
