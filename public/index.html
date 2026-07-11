@@ -64,17 +64,19 @@
   .logo b { font-family:var(--mono); font-size:15px; letter-spacing:.5px; font-weight:600; }
   .logo .tag { font-family:var(--mono); font-size:10.5px; color:var(--muted); letter-spacing:.4px; }
   .search {
-    flex:1; max-width:640px; display:flex; align-items:center; gap:10px; position:relative;
+    flex:1; max-width:860px; display:flex; align-items:center; gap:10px; position:relative;
   }
   .search .field {
-    flex:1; display:flex; align-items:center; gap:9px; background:var(--panel);
+    /* min-width:0 — without it a flex item refuses to shrink below its content,
+       so the (nowrap) budget readout beside it overflows and paints over the scope select */
+    flex:1; min-width:0; display:flex; align-items:center; gap:9px; background:var(--panel);
     border:1px solid var(--line); border-radius:9px; padding:0 12px; height:36px;
     transition:border-color .15s;
   }
   .search .field:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,214,190,.1); }
   .search .field .ic { color:var(--muted); font-size:14px; }
   .search input {
-    flex:1; background:none; border:none; outline:none; color:var(--txt);
+    flex:1; min-width:0; background:none; border:none; outline:none; color:var(--txt);
     font-family:var(--mono); font-size:13px;
   }
   .search input::placeholder { color:var(--dim); }
@@ -89,7 +91,22 @@
   .scope .sc-x { background:none; border:none; color:inherit; cursor:pointer; font-size:11px; padding:0 3px; line-height:1; }
   .scope .sc-x:hover { color:var(--txt); }
   .res-head .sc-in { color:var(--accent); }
-  .budget { font-family:var(--mono); font-size:10.5px; color:var(--muted); white-space:nowrap; min-width:96px; text-align:right; }
+  .budget { font-family:var(--mono); font-size:10.5px; color:var(--muted); white-space:nowrap; flex:none; text-align:right;
+            display:flex; align-items:center; justify-content:flex-end; gap:5px; }
+  .budget .of { opacity:.55; }
+  /* how full the context window is — lens's whole job, made visible */
+  .budget .meter { display:inline-block; width:42px; height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
+  .budget .meter i { display:block; height:100%; background:var(--accent); border-radius:3px; }
+  /* what the budget cost you — shown only when it actually cost you something */
+  .squeeze { display:flex; align-items:center; gap:10px; margin:0 0 14px; padding:10px 12px; border-radius:8px;
+             border:1px solid var(--line); background:color-mix(in srgb, var(--accent) 7%, transparent);
+             font-size:12px; line-height:1.5; color:var(--fg); }
+  .squeeze .sq-i { color:var(--accent); font-size:15px; flex:none; }
+  .squeeze b { font-weight:600; }
+  .squeeze div { flex:1; }
+  .sq-b { flex:none; font:inherit; font-size:11px; font-family:var(--mono); cursor:pointer; padding:5px 10px; border-radius:6px;
+          border:1px solid var(--accent); background:transparent; color:var(--accent); white-space:nowrap; }
+  .sq-b:hover { background:var(--accent); color:var(--bg); }
   .budget b { color:var(--accent); font-variant-numeric:tabular-nums; }
   .top .repo { margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--muted); }
 
@@ -1149,19 +1166,49 @@ function refGroup(g, sym) {
   </div>`;
 }
 
+// ── The budget ───────────────────────────────────────────────────────────────
+// lens exists to decide what fits in a context window, so the window is the one
+// thing the reader must be able to see and move. Below, a search that withheld
+// results says so and offers the widening that would bring them back — a budget
+// that hides hits while reporting itself complete is worse than no budget.
+let BUDGET = 2400, K = 12;
+const tok = (n) => n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
+
 async function runSearch(q) {
-  const r = await api('/api/search?k=12&q=' + encodeURIComponent(q)
+  lastQuery = q;
+  const r = await api(`/api/search?k=${K}&tokens=${BUDGET}&q=` + encodeURIComponent(q)
     + (scope ? '&glob=' + encodeURIComponent(scope) : ''));
   $('#welcome').style.display = 'none'; $('#reader').classList.remove('show');
   $('#results').hidden = false;
-  $('#budget').innerHTML = r.count ? `<b>${r.count}</b> hits · <b>~${r.tokens}</b> tok` : '';
+  const used = Math.min(100, Math.round((r.tokens / BUDGET) * 100));
+  $('#budget').innerHTML = r.count
+    ? `<b>${r.count}</b>${r.withheld ? `<span class="of">of ${r.matched}</span>` : ''} hits · <span class="meter" title="~${r.tokens} of a ${BUDGET}-token budget"><i style="width:${used}%"></i></span> <b>~${tok(r.tokens)}</b><span class="of">/ ${tok(BUDGET)} tok</span>`
+    : '';
   const terms = (q.match(/[A-Za-z0-9_]+/g) || []).filter((t) => t.length > 1);
   const where = scope ? ` in <span class="sc-in">${esc(scope.replace(/\*$/, ''))}</span>` : '';
   $('#results').innerHTML = r.count
     ? `<div class="res-head"><b>${r.count}</b> snippets for “${esc(q)}”${where} — pulled in <b>~${r.tokens}</b> tokens (budget-ranked by bm25)</div>` +
-      r.results.map((x) => hitCard(x, terms)).join('')
+      withheldNote(r) + r.results.map((x) => hitCard(x, terms)).join('')
     : `<div class="res-head">No matches for “${esc(q)}”${where}.${scope ? ' Clear the scope to search the whole repo.' : ' Try a symbol name or a string that appears in the code.'}</div>`;
 }
+
+// What the budget cost you, and the one click that buys it back.
+function withheldNote(r) {
+  if (!r.withheld) return '';
+  const n = r.withheld, s = n === 1 ? '' : 's';
+  return r.limited_by === 'budget'
+    ? `<div class="squeeze"><span class="sq-i">◔</span><div><b>${n} more chunk${s} matched but didn’t fit</b> the ${tok(BUDGET)}-token budget. lens ranks by bm25 and packs until the window is full — these are the ones below the line.</div>
+       <button class="sq-b" data-widen="budget">Widen to ${tok(BUDGET * 2)}</button></div>`
+    : `<div class="squeeze"><span class="sq-i">◔</span><div><b>${n} more chunk${s} matched.</b> You’re seeing the top ${r.k} by bm25 — the budget wasn’t the limit, the result cap was.</div>
+       <button class="sq-b" data-widen="k">Show ${K * 2}</button></div>`;
+}
+let lastQuery = '';
+$('#results').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-widen]');
+  if (!b) return;
+  if (b.dataset.widen === 'budget') BUDGET *= 2; else { K *= 2; BUDGET = Math.max(BUDGET, K * 300); }
+  runSearch(lastQuery);
+});
 function hitCard(x, terms) {
   return `<div class="hit" data-path="${esc(x.path)}" data-line="${x.start}">
     <div class="hit-head">

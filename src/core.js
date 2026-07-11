@@ -171,16 +171,36 @@ export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
   try { rows = all(sql, ...args); } catch (e) { return { query, error: String(e.message), results: [] }; }
 
   const results = [];
-  let tokens = 0;
+  let tokens = 0, squeezed = 0;
   for (const r of rows) {
     const t = estTokens(r.body);
     if (results.length >= k) break;
-    if (tokens + t > max_tokens && results.length > 0) continue;
+    if (tokens + t > max_tokens && results.length > 0) { squeezed++; continue; }
     results.push({ path: r.path, start: r.start, end: r.end, lang: r.lang,
       score: Math.round(r.score * 1000) / 1000, tokens: t, body: r.body });
     tokens += t;
   }
-  return { query, count: results.length, tokens, results };
+
+  // How many chunks actually matched — not how many survived. Without this a
+  // caller cannot tell "6 hits exist" from "6 of 40 hits fit the budget", and a
+  // budget that hides results while claiming to be complete is worse than no
+  // budget at all. Counted over the same MATCH (+glob), so it is the whole truth,
+  // not just the k*3 candidate window.
+  let matched = results.length;
+  try {
+    let csql = `SELECT COUNT(*) n FROM chunks WHERE chunks MATCH ?`;
+    const cargs = [m];
+    if (path_glob) { csql += ` AND path GLOB ?`; cargs.push(path_glob); }
+    matched = get(csql, ...cargs).n;
+  } catch { /* keep the floor */ }
+
+  const withheld = Math.max(0, matched - results.length);
+  // Which ceiling actually bound? Raising the wrong one changes nothing, so say
+  // it plainly: if the budget squeezed anything out it is the budget; otherwise
+  // we stopped because we hit k.
+  const limited_by = withheld === 0 ? null : squeezed > 0 ? 'budget' : 'k';
+  return { query, count: results.length, tokens, results,
+    matched, withheld, limited_by, budget: max_tokens, k };
 }
 
 // ── Find references ───────────────────────────────────────────────────────────

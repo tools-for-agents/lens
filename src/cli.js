@@ -26,6 +26,13 @@ try {
       out(x.body);
     }
     out(`\n— ${r.count || 0} hits, ~${r.tokens || 0} tokens —`);
+    // Never let the budget hide results silently: say what was left out and
+    // which flag would bring it back.
+    if (r.withheld) {
+      out(r.limited_by === 'budget'
+        ? `  ${r.withheld} more chunk${r.withheld === 1 ? '' : 's'} matched but did not fit the ${r.budget}-token budget — raise it with --tokens ${r.budget * 2}`
+        : `  ${r.withheld} more chunk${r.withheld === 1 ? '' : 's'} matched — show them with -k ${r.k * 2}`);
+    }
   } else if (cmd === 'refs' || cmd === 'references') {
     const r = references(rest.find((a) => !a.startsWith('-')) || '');
     if (!r.symbol) { out('usage: lens refs <symbol>'); }

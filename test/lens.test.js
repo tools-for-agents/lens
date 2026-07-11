@@ -31,6 +31,39 @@ test('search returns ranked snippets within a token budget', () => {
   assert.ok(r.tokens <= 800);
 });
 
+// A budget that hides hits while reporting itself complete is worse than no
+// budget. Whatever it squeezes out, it must OWN — say how many, and say WHICH
+// ceiling did it, because raising the wrong one changes nothing.
+test('search owns up to what the budget squeezed out — and names the ceiling that did it', () => {
+  // Eight files that all match one rare term, so `matched` is exactly knowable.
+  const many = join(work, 'many');
+  mkdirSync(many, { recursive: true });
+  for (let i = 0; i < 8; i++) {
+    writeFileSync(join(many, `svc${i}.js`),
+      `// zephyrquota service ${i}\nexport function quota${i}(user) {\n  const limit = lookupZephyrquota(user);\n  return limit ?? DEFAULT;\n}\n`);
+  }
+  lens.indexPath(many);
+
+  const tight = lens.search('zephyrquota', { k: 12, max_tokens: 30 });
+  assert.equal(tight.matched, 8, 'all eight chunks matched — that is the truth of the index');
+  assert.equal(tight.count, 1, 'a 30-token budget fits one chunk (the top hit is always let through)');
+  assert.equal(tight.withheld, 7, 'withheld is the honest difference, not silence');
+  assert.equal(tight.limited_by, 'budget', 'the budget bound — raising k would change nothing');
+  assert.equal(tight.budget, 30, 'the budget it used comes back, so the UI can offer to double it');
+
+  // Widen it and the withheld chunks come back — the offer the UI makes is real.
+  const wide = lens.search('zephyrquota', { k: 12, max_tokens: 20000 });
+  assert.equal(wide.count, 8, 'widening the budget returns every match');
+  assert.equal(wide.withheld, 0);
+  assert.equal(wide.limited_by, null, 'nothing withheld → no ceiling to name, no crying wolf');
+
+  // Budget generous, cap tight: a DIFFERENT ceiling, and a different fix.
+  const capped = lens.search('zephyrquota', { k: 3, max_tokens: 20000 });
+  assert.equal(capped.count, 3);
+  assert.equal(capped.withheld, 5);
+  assert.equal(capped.limited_by, 'k', 'nothing was squeezed by tokens — the result cap is the ceiling');
+});
+
 test('search can restrict by path glob', () => {
   const r = lens.search('websocket reconnect', { path_glob: '*notes.md' });
   assert.ok(r.results.every((x) => x.path.endsWith('notes.md')));
