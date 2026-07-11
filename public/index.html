@@ -201,15 +201,25 @@
   }
   .code-head .path { color:var(--txt); }
   .code-head .path .d { color:var(--muted); }
-  .code-head .cm { margin-left:auto; display:flex; gap:12px; color:var(--muted); }
+  .code-head .cm { margin-left:auto; display:flex; align-items:center; gap:12px; color:var(--muted); }
   .code-head .cm .lang-pill { color:var(--bg); padding:1px 8px; border-radius:20px; font-size:10.5px; font-weight:600; }
+  .ch-copy { display:flex; gap:6px; }
+  .ch-btn {
+    font-family:var(--mono); font-size:10.5px; color:var(--muted); background:var(--panel-2);
+    border:1px solid var(--line); border-radius:5px; padding:2px 8px; cursor:pointer;
+    transition:color .12s, border-color .12s;
+  }
+  .ch-btn:hover { color:var(--accent); border-color:var(--accent); }
+  .ch-btn.done { color:var(--accent); border-color:var(--accent); }
+  .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
   pre.code { margin:0; font-family:var(--mono); font-size:12.5px; line-height:1.6; padding:8px 0 60px; }
   .cl { display:flex; }
   .cl:target, .cl.hl { background:rgba(79,214,190,.09); }
   .cl .n {
     flex:0 0 auto; width:52px; text-align:right; padding:0 14px 0 0; color:var(--dim);
-    user-select:none; font-variant-numeric:tabular-nums;
+    user-select:none; font-variant-numeric:tabular-nums; cursor:pointer;   /* click a number to aim the permalink at that line */
   }
+  .cl .n:hover { color:var(--accent); }
   .cl .c { flex:1; white-space:pre; padding-right:20px; }
   /* syntax */
   .sx-key { color:var(--sx-key); } .sx-str { color:var(--sx-str); } .sx-com { color:var(--sx-com); font-style:italic; }
@@ -310,6 +320,7 @@
       <div class="code-wrap">
         <div class="code-head" id="codehead"></div>
         <pre class="code" id="code"></pre>
+        <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
       </div>
       <div class="outline" id="outline"></div>
     </div>
@@ -347,7 +358,7 @@ $('#theme').addEventListener('click', () => {
   localStorage.setItem('lens:theme', next);
 });
 
-let TREE = [], STATS = null, activeFile = null, mode = 'search', maxFileTokens = 1, outlineKind = null;
+let TREE = [], STATS = null, activeFile = null, mode = 'search', maxFileTokens = 1, outlineKind = null, selectedLine = null;
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 (async () => {
@@ -365,6 +376,10 @@ function openFromHash() {
   if (!h) return;
   const m = h.match(/^(.*?):(\d+)(?:\.\d+)?$/);   // tolerate a "45" or "45.0" line
   const path = m ? m[1] : h, line = m ? +m[2] : undefined;
+  if (path === activeFile) {                      // already reading it — just move, don't refetch the file
+    if (line && line !== selectedLine) scrollToLine(line);
+    return;
+  }
   if (TREE.some((t) => t.path === path)) openFile(path, line);
 }
 addEventListener('hashchange', openFromHash);
@@ -480,7 +495,12 @@ async function openFile(path, line) {
       <span>${file.total_lines} lines</span>
       <span>~${file.tokens} tok</span>
       <span class="lang-pill" style="background:${langColor(lang)}">${lang}</span>
+      <span class="ch-copy">
+        <button class="ch-btn" data-copy="path" title="Copy the file path" aria-label="Copy the file path">⧉ path</button>
+        <button class="ch-btn" data-copy="link" title="Copy a permalink to this file (and the selected line)" aria-label="Copy a permalink to this file">⧉ link</button>
+      </span>
     </span>`;
+  $('#copy-status').textContent = '';
   $('#code').innerHTML = renderCode(file.body, lang);
   outlineKind = null;                                    // a new file starts unfiltered
   $('#outline').innerHTML = `<div class="oh">outline · ${ol.symbols.length} symbols${ol.symbols.length ? ` <button class="oh-jump" data-jump title="Jump to symbol (⌘⇧O)" aria-label="Jump to symbol">⤳ jump</button>` : ''}</div>` +
@@ -488,7 +508,8 @@ async function openFile(path, line) {
     (ol.symbols.map((s) => { const sym = symbolName(s.text);
       return `<div class="osym" data-line="${s.line}" data-kind="${esc(s.kind || 'other')}" tabindex="0" role="button" aria-label="Jump to line ${s.line}"><span class="ol">${s.line}</span><span class="ot">${esc(s.text)}</span>${sym ? `<button class="osym-r" data-sym="${esc(sym)}" title="find references to ${esc(sym)}" aria-label="Find references to ${esc(sym)}">⇉ refs</button>` : ''}</div>`;
     }).join('') || '<div class="osym" style="color:var(--dim)">no symbols</div>');
-  if (line) scrollToLine(line); else $('#code').parentElement.scrollTop = 0;
+  if (line) scrollToLine(line);
+  else { selectedLine = null; syncHash(); $('#code').parentElement.scrollTop = 0; }
   collectOutlineSyms(); updateActiveSymbol();          // sync the outline highlight to the scroll position
 }
 function dirfmt(path) {
@@ -576,13 +597,69 @@ $('#outline').addEventListener('keydown', (e) => {   // keyboard-operable outlin
 });
 function scrollToLine(line, top) {
   const el = document.getElementById('L' + line); if (!el) return;
-  document.querySelectorAll('.cl.hl').forEach((x) => x.classList.remove('hl'));
-  el.classList.add('hl');
+  markLine(line);
   if (top) {   // align to the top (below the sticky head) so the clicked symbol becomes the current one
     $('#code').parentElement.scrollTo({ top: el.offsetTop - ($('#codehead').offsetHeight || 40) - 6, behavior: 'smooth' });
   } else {     // center (used by cross-tool deep-links, where surrounding context helps)
     el.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
+}
+
+// ── Permalink: the URL bar always points at what you're reading ──────────────
+// Highlighting a line is what aims the permalink, so every path that highlights
+// (outline, jump, search hit, cross-tool deep-link, gutter click) funnels here.
+function markLine(line) {
+  document.querySelectorAll('.cl.hl').forEach((x) => x.classList.remove('hl'));
+  const el = document.getElementById('L' + line); if (!el) return;
+  el.classList.add('hl');
+  selectedLine = line;
+  syncHash();
+}
+// replaceState, not location.hash: no history spam and no hashchange re-entrancy
+function syncHash() {
+  if (!activeFile) return;
+  history.replaceState(null, '', '#' + activeFile + (selectedLine ? ':' + selectedLine : ''));
+}
+function permalink() { return location.origin + '/#' + activeFile + (selectedLine ? ':' + selectedLine : ''); }
+
+// Click a line number to aim the permalink at that line. Mouse-only by design:
+// giving every gutter number a tab stop would bury the real controls under
+// hundreds of them — keyboard users aim the permalink via the outline/jump/search,
+// which all run through markLine() too.
+$('#code').addEventListener('click', (e) => {
+  if (!e.target.classList.contains('n')) return;
+  const cl = e.target.closest('.cl'); if (!cl) return;
+  markLine(+cl.id.slice(1));
+});
+
+$('#codehead').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-copy]'); if (!btn) return;
+  const link = btn.dataset.copy === 'link';
+  copyText(link ? permalink() : activeFile).then((ok) => {
+    const label = link ? '⧉ link' : '⧉ path';
+    btn.textContent = ok ? '✓ copied' : '✕ failed';
+    btn.classList.toggle('done', ok);
+    $('#copy-status').textContent = ok
+      ? (link ? 'Permalink copied: ' + permalink() : 'Path copied: ' + activeFile)
+      : 'Copy failed';
+    setTimeout(() => { btn.textContent = label; btn.classList.remove('done'); }, 1400);
+  });
+});
+
+// navigator.clipboard needs a secure context (localhost is one) — fall back to
+// the textarea+execCommand trick when lens is served from a plain-http host.
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
 }
 
 // ── Active-symbol scroll-sync: highlight the outline symbol you're currently reading ──
