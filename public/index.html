@@ -211,6 +211,10 @@
   }
   .ch-btn:hover { color:var(--accent); border-color:var(--accent); }
   .ch-btn.done { color:var(--accent); border-color:var(--accent); }
+  /* capture wears cortex's violet, not lens's teal: it is the brain's action */
+  .ch-btn.brain { color:#a78bfa; border-color:color-mix(in srgb,#a78bfa 34%,var(--line)); }
+  .ch-btn.brain:hover, .ch-btn.brain.done { color:#a78bfa; border-color:#a78bfa; background:color-mix(in srgb,#a78bfa 12%,var(--panel-2)); }
+  .ch-btn:disabled { opacity:.65; cursor:default; }
   .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
   pre.code { margin:0; font-family:var(--mono); font-size:12.5px; line-height:1.6; padding:8px 0 60px; }
   .cl { display:flex; }
@@ -498,6 +502,7 @@ async function openFile(path, line) {
       <span class="ch-copy">
         <button class="ch-btn" data-copy="path" title="Copy the file path" aria-label="Copy the file path">⧉ path</button>
         <button class="ch-btn" data-copy="link" title="Copy a permalink to this file (and the selected line)" aria-label="Copy a permalink to this file">⧉ link</button>
+        <button class="ch-btn brain" data-capture title="Keep this passage in cortex (your selection, or the symbol you're reading)" aria-label="Send this passage to cortex">🧠 → cortex</button>
       </span>
     </span>`;
   $('#copy-status').textContent = '';
@@ -633,6 +638,7 @@ $('#code').addEventListener('click', (e) => {
 });
 
 $('#codehead').addEventListener('click', (e) => {
+  const cap = e.target.closest('[data-capture]'); if (cap) { captureToCortex(cap); return; }
   const btn = e.target.closest('[data-copy]'); if (!btn) return;
   const link = btn.dataset.copy === 'link';
   copyText(link ? permalink() : activeFile).then((ok) => {
@@ -645,6 +651,76 @@ $('#codehead').addEventListener('click', (e) => {
     setTimeout(() => { btn.textContent = label; btn.classList.remove('done'); }, 1400);
   });
 });
+
+// ── Send a passage to cortex — lens reads code, cortex keeps what matters ────
+// What you capture is what you're looking at: the lines you selected, or — if
+// you selected nothing — the symbol you're currently reading (the one the
+// outline is highlighting). The note carries lens's own #path:line permalink as
+// its source, so the brain can always walk back to the code.
+// lens never writes: the browser POSTs to cortex's own /api/capture.
+
+// The line range of the current text selection, if it lies inside the code pane.
+function selectionRange() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const lineOf = (node) => {
+    const el = node.nodeType === 1 ? node : node.parentElement;
+    const cl = el && el.closest('.cl');
+    return cl ? +cl.id.slice(1) : null;
+  };
+  const a = lineOf(sel.anchorNode), b = lineOf(sel.focusNode);
+  if (!a || !b) return null;
+  return { start: Math.min(a, b), end: Math.max(a, b), kind: 'selection' };
+}
+// The span of the symbol you're currently reading: from its line to just before
+// the next one (capped — a note is a passage, not a whole file).
+function currentSymbolRange() {
+  const cur = $('#outline .osym.cur') || $('#outline .osym[data-line]');
+  if (!cur) return null;
+  const start = +cur.dataset.line;
+  const next = outlineSyms.find((s) => s.line > start);
+  const end = Math.min(next ? next.line - 1 : start + 120, start + 120);
+  return { start, end: Math.max(start, end), kind: 'symbol', name: symbolName(cur.querySelector('.ot')?.textContent || '') };
+}
+
+async function captureToCortex(btn) {
+  if (!activeFile || !STATS || !STATS.cortex) return;
+  const range = selectionRange() || currentSymbolRange();
+  if (!range) return;
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '🧠 saving…';
+  try {
+    const meta = TREE.find((t) => t.path === activeFile) || {};
+    const lang = meta.lang || 'text';
+    // pull the exact lines from the index rather than scraping the highlighted DOM
+    const file = await api(`/api/read?path=${encodeURIComponent(activeFile)}&start=${range.start}&end=${range.end}`);
+    const code = String(file.body || '').split('\n')
+      .map((l) => { const t = l.indexOf('\t'); return t >= 0 ? l.slice(t + 1) : l; })   // drop the "N\t" gutter
+      .join('\n').replace(/\s+$/, '');
+    if (!code.trim()) throw new Error('nothing to capture');
+
+    const base = activeFile.split('/').pop();
+    const title = range.name ? `${range.name} — ${base}` : `${base}:L${range.start}-${range.end}`;
+    const where = `${activeFile}:${range.start}${range.end > range.start ? `-${range.end}` : ''}`;
+    const text = `\`${where}\`\n\n\`\`\`${lang}\n${code}\n\`\`\``;
+
+    const res = await fetch(`${STATS.cortex}/api/capture`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, title, source: location.origin + '/#' + activeFile + ':' + range.start }),
+    });
+    if (!res.ok) throw new Error('cortex refused');
+    const r = await res.json();
+    btn.classList.add('done');
+    btn.textContent = r.action === 'updated' ? '🧠 ✓ appended' : '🧠 ✓ in cortex';
+    btn.title = `Saved to cortex as "${r.slug}"`;
+    $('#copy-status').textContent = `Captured ${where} to cortex as "${r.slug}"`;
+    setTimeout(() => { btn.disabled = false; btn.classList.remove('done'); btn.textContent = label; btn.title = 'Keep this passage in cortex'; }, 2600);
+  } catch {
+    btn.textContent = '🧠 cortex offline';
+    btn.title = 'Start cortex serve (port 7800) to capture into your brain';
+    setTimeout(() => { btn.disabled = false; btn.textContent = label; }, 2600);
+  }
+}
 
 // navigator.clipboard needs a secure context (localhost is one) — fall back to
 // the textarea+execCommand trick when lens is served from a plain-http host.

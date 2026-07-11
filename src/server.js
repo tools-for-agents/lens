@@ -19,8 +19,12 @@ function json(res, code, body) {
 }
 
 // Endpoints only run against the index; outline/read reject non-indexed paths.
+// Where cortex's web view lives, so the reader can send a passage to the brain.
+// The capture itself is cortex's POST /api/capture — lens never writes.
+const CORTEX_URL = (process.env.LENS_CORTEX_URL || 'http://localhost:7800').replace(/\/$/, '');
+
 const api = {
-  '/api/stats': () => stats(),
+  '/api/stats': () => ({ ...stats(), cortex: CORTEX_URL }),
   '/api/map': () => map({ limit: 2000 }),
   '/api/search': (q) => search(q.q || '', { k: q.k ? +q.k : 12, max_tokens: q.tokens ? +q.tokens : 2400, path_glob: q.glob || undefined }),
   '/api/references': (q) => references(q.symbol || '', { limit: q.limit ? +q.limit : 400 }),

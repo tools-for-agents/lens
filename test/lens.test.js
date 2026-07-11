@@ -147,3 +147,16 @@ test('serve: HTTP endpoints expose the index and guard path traversal', async ()
     assert.equal(notFound.status, 200, 'unknown paths fall through to the SPA, not a crash');
   } finally { server.close(); }
 });
+
+test('serve: stats advertises where cortex lives, so the reader can capture to it', async () => {
+  const { createLensServer } = await import('../src/server.js');
+  const server = createLensServer();
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://localhost:${server.address().port}`;
+  try {
+    const s = await fetch(base + '/api/stats').then((r) => r.json());
+    // lens never writes: it only tells the page which brain to POST to
+    assert.equal(s.cortex, 'http://localhost:7800', 'defaults to cortex serve');
+    assert.ok(s.files > 0, 'and still carries the index stats');
+  } finally { server.close(); }
+});
