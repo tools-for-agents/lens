@@ -204,3 +204,40 @@ test('freshness sees the tree drift, and re-indexing forgets what is gone', asyn
     'the deleted file is gone from search, not just from disk');
   assert.ok(!map().tree.some((f) => f.path === 'src/doomed.js'), 'and gone from the file tree');
 });
+
+test('search can be scoped to a directory — the glob the UI now sends', async (t) => {
+  const { createLensServer } = await import('../src/server.js');
+  const { freshness, indexPath } = await import('../src/core.js');
+
+  // paths are stored relative to cwd, so build the tree under one we control
+  const dir = mkdtempSync(join(tmpdir(), 'lens-scope-'));
+  const prevCwd = process.cwd();
+  process.chdir(dir);
+  t.after(() => { process.chdir(prevCwd); try { rmSync(dir, { recursive: true, force: true }); } catch {} });
+
+  mkdirSync(join(dir, 'src', 'deep'), { recursive: true });
+  mkdirSync(join(dir, 'docs'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'a.js'), 'export function widget() { return "kiwi"; }\n');
+  writeFileSync(join(dir, 'src', 'deep', 'b.js'), 'export function widget2() { return "kiwi"; }\n');
+  writeFileSync(join(dir, 'docs', 'guide.md'), '# Guide\n\nThe widget returns a kiwi.\n');
+  indexPath('.');
+
+  const server = createLensServer();
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://localhost:${server.address().port}`;
+  const paths = (r) => [...new Set(r.results.map((x) => x.path))].sort();
+  try {
+    const all = await fetch(base + '/api/search?q=kiwi&k=30').then((r) => r.json());
+    assert.deepEqual(paths(all), ['docs/guide.md', 'src/a.js', 'src/deep/b.js'], 'unscoped, it searches everything');
+
+    // "src/*" is a GLOB, so it covers the SUBTREE, not just the immediate children
+    const scoped = await fetch(base + '/api/search?q=kiwi&k=30&glob=' + encodeURIComponent('src/*')).then((r) => r.json());
+    assert.deepEqual(paths(scoped), ['src/a.js', 'src/deep/b.js'], 'the scope covers the subtree and nothing outside it');
+    assert.ok(scoped.count < all.count, 'a scope narrows the answer');
+
+    // a scope that matches nothing must find NOTHING — silently searching the whole
+    // repo instead would be the dangerous failure
+    const none = await fetch(base + '/api/search?q=kiwi&k=30&glob=' + encodeURIComponent('nowhere/*')).then((r) => r.json());
+    assert.equal(none.count, 0, 'a scope with no files finds nothing, not everything');
+  } finally { server.close(); }
+});

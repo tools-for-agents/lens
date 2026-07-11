@@ -79,6 +79,16 @@
   }
   .search input::placeholder { color:var(--dim); }
   .search .kbd { font-family:var(--mono); font-size:10px; color:var(--dim); border:1px solid var(--line); border-radius:5px; padding:1px 6px; }
+  /* scope: search a directory instead of the whole repo */
+  .sc-sel { flex:none; max-width:132px; font-family:var(--mono); font-size:10.5px; color:var(--muted); cursor:pointer;
+    background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:2px 4px; outline:none; }
+  .sc-sel:hover { color:var(--txt); border-color:var(--accent-dim); }
+  .scope { display:inline-flex; align-items:center; gap:5px; flex:none; font-family:var(--mono); font-size:10.5px;
+    color:var(--accent); background:rgba(79,214,190,.12); border:1px solid var(--accent-dim); border-radius:6px; padding:2px 4px 2px 8px; }
+  .scope[hidden] { display:none; }
+  .scope .sc-x { background:none; border:none; color:inherit; cursor:pointer; font-size:11px; padding:0 3px; line-height:1; }
+  .scope .sc-x:hover { color:var(--txt); }
+  .res-head .sc-in { color:var(--accent); }
   .budget { font-family:var(--mono); font-size:10.5px; color:var(--muted); white-space:nowrap; min-width:96px; text-align:right; }
   .budget b { color:var(--accent); font-variant-numeric:tabular-nums; }
   .top .repo { margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--muted); }
@@ -345,6 +355,8 @@
       <div class="field">
         <span class="ic">⌕</span>
         <input id="q" placeholder="search the index — functions, strings, symbols…" autocomplete="off" spellcheck="false" />
+        <span class="scope" id="scope" hidden><span class="sc-t" id="scopeTxt"></span><button class="sc-x" id="scopeX" title="Search everything again" aria-label="Clear the scope">✕</button></span>
+        <select id="scopeSel" class="sc-sel" aria-label="Scope the search to a directory"></select>
         <span class="kbd">/</span>
       </div>
       <div class="budget" id="budget"></div>
@@ -414,6 +426,7 @@ let TREE = [], STATS = null, activeFile = null, mode = 'search', maxFileTokens =
   maxFileTokens = Math.max(1, ...TREE.map((f) => f.tokens || 0));   // scale the per-file weight bars to the heaviest file
   renderStats(); renderTree(''); renderRecent();
   $('#repo').textContent = STATS.files + ' files indexed';
+  renderScopeOptions();                 // the dirs you can scope a search to
   checkFreshness();                     // has the tree moved under the index?
   openFromHash();                       // deep-link: #<path>:<line> (e.g. from recall)
 })();
@@ -870,6 +883,31 @@ $('#q').addEventListener('input', (e) => {
 $('#q').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); $('#results').hidden = true; $('#budget').textContent = ''; } });
 
 // search ⇄ refs mode
+// ── Scope: search a directory instead of the whole repo ─────────────────────
+// core.search has always taken a path_glob (and the route has always passed
+// ?glob=) — the UI just never offered it, so every search was the whole repo. On a
+// big tree that is the difference between an answer and a haystack. And the
+// treemap already tells you WHICH directory holds the mass: click it, and search
+// inside it.
+let scope = null;                       // e.g. "src/*" — a GLOB, so it covers the subtree
+function renderScopeOptions() {
+  const dirs = [...new Set(TREE.map((f) => dirOf(f.path)))].filter((d) => d !== './').sort();
+  $('#scopeSel').innerHTML = '<option value="">scope: all files</option>'
+    + dirs.map((d) => `<option value="${esc(d)}*">${esc(d)}</option>`).join('');
+  $('#scopeSel').value = scope || '';
+}
+function setScope(glob) {
+  scope = glob || null;
+  $('#scopeSel').value = scope || '';
+  $('#scopeSel').hidden = !!scope;
+  $('#scope').hidden = !scope;
+  if (scope) $('#scopeTxt').textContent = scope.replace(/\*$/, '');
+  const q = $('#q').value.trim();
+  if (q && mode !== 'map') (mode === 'refs' ? runRefs(q) : runSearch(q));
+}
+$('#scopeSel').addEventListener('change', (e) => setScope(e.target.value));
+$('#scopeX').addEventListener('click', () => { setScope(null); $('#q').focus(); });
+
 // ── Is the index still true? ────────────────────────────────────────────────
 // lens serves an index of a tree that keeps moving underneath it. It used to say
 // nothing — a file you edited five minutes ago was still served as it was, and a
@@ -903,7 +941,7 @@ document.addEventListener('click', async (e) => {
     const [st, mp] = await Promise.all([api('/api/stats'), api('/api/map')]);
     STATS = st; TREE = mp.tree;
     maxFileTokens = Math.max(1, ...TREE.map((f) => f.tokens || 0));
-    renderStats(); renderTree($('#filter').value || ''); renderRecent();
+    renderStats(); renderTree($('#filter').value || ''); renderRecent(); renderScopeOptions();
     $('#repo').textContent = STATS.files + ' files indexed';
     if (mode === 'map') renderTreemap();
     const el = $('#stale');
@@ -1043,10 +1081,22 @@ $('#tmCanvas').addEventListener('mousemove', (e) => {
 });
 $('#tmCanvas').addEventListener('mouseleave', () => { tmTip.style.display = 'none'; });
 $('#tmCanvas').addEventListener('click', (e) => {
-  const f = e.target.closest('.tm-file'); if (!f) return;
+  const f = e.target.closest('.tm-file');
+  if (f) {
+    tmTip.style.display = 'none';
+    setMode('search');                     // opening a file leaves the map
+    openFile(f.dataset.path);
+    return;
+  }
+  // The treemap tells you which directory holds the repo's mass. Clicking it scopes
+  // the search there — see where the weight is, then search inside it.
+  const d = e.target.closest('.tm-dir'); if (!d) return;
+  const name = d.querySelector('.dh')?.textContent.split(' · ')[0] || (d.title || '').split(' · ')[0];
+  if (!name) return;
   tmTip.style.display = 'none';
-  setMode('search');                       // opening a file leaves the map
-  openFile(f.dataset.path);
+  setScope(name + '*');
+  setMode('search');
+  $('#q').focus();
 });
 $('#tmCanvas').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -1100,15 +1150,17 @@ function refGroup(g, sym) {
 }
 
 async function runSearch(q) {
-  const r = await api('/api/search?k=12&q=' + encodeURIComponent(q));
+  const r = await api('/api/search?k=12&q=' + encodeURIComponent(q)
+    + (scope ? '&glob=' + encodeURIComponent(scope) : ''));
   $('#welcome').style.display = 'none'; $('#reader').classList.remove('show');
   $('#results').hidden = false;
   $('#budget').innerHTML = r.count ? `<b>${r.count}</b> hits · <b>~${r.tokens}</b> tok` : '';
   const terms = (q.match(/[A-Za-z0-9_]+/g) || []).filter((t) => t.length > 1);
+  const where = scope ? ` in <span class="sc-in">${esc(scope.replace(/\*$/, ''))}</span>` : '';
   $('#results').innerHTML = r.count
-    ? `<div class="res-head"><b>${r.count}</b> snippets for “${esc(q)}” — pulled in <b>~${r.tokens}</b> tokens (budget-ranked by bm25)</div>` +
+    ? `<div class="res-head"><b>${r.count}</b> snippets for “${esc(q)}”${where} — pulled in <b>~${r.tokens}</b> tokens (budget-ranked by bm25)</div>` +
       r.results.map((x) => hitCard(x, terms)).join('')
-    : `<div class="res-head">No matches for “${esc(q)}”. Try a symbol name or a string that appears in the code.</div>`;
+    : `<div class="res-head">No matches for “${esc(q)}”${where}.${scope ? ' Clear the scope to search the whole repo.' : ' Try a symbol name or a string that appears in the code.'}</div>`;
 }
 function hitCard(x, terms) {
   return `<div class="hit" data-path="${esc(x.path)}" data-line="${x.start}">
