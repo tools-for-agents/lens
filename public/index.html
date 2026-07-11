@@ -217,6 +217,19 @@
   .ch-btn:disabled { opacity:.65; cursor:default; }
   .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 
+  /* the index has drifted from the tree — say so, and offer to fix it */
+  .stale { padding:10px 13px; border-bottom:1px solid var(--line); background:color-mix(in srgb, var(--amber) 9%, var(--bg-2)); }
+  .stale[hidden] { display:none; }
+  .stale .st-l { display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:11px; color:var(--amber); }
+  .stale .st-d { font-family:var(--mono); font-size:10.5px; color:var(--muted); margin:5px 0 8px; line-height:1.5; }
+  .stale button { width:100%; font-family:var(--mono); font-size:11px; font-weight:600; cursor:pointer;
+    color:var(--amber); background:color-mix(in srgb, var(--amber) 12%, transparent);
+    border:1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius:7px; padding:5px 0; }
+  .stale button:hover { background:color-mix(in srgb, var(--amber) 22%, transparent); }
+  .stale button:disabled { opacity:.6; cursor:default; }
+  .stale.ok { background:color-mix(in srgb, var(--accent) 8%, var(--bg-2)); }
+  .stale.ok .st-l { color:var(--accent); }
+
   /* ── Treemap: where the repo's tokens actually are ── */
   .tmap { display:flex; flex-direction:column; height:100%; overflow:hidden; }
   .tmap[hidden] { display:none; }
@@ -341,6 +354,7 @@
   </header>
 
   <aside class="rail">
+    <div class="stale" id="stale" hidden></div>
     <div class="stats" id="stats"></div>
     <div class="filter"><input id="filter" placeholder="filter files…" autocomplete="off" spellcheck="false" /></div>
     <div class="recent" id="recent" hidden></div>
@@ -400,6 +414,7 @@ let TREE = [], STATS = null, activeFile = null, mode = 'search', maxFileTokens =
   maxFileTokens = Math.max(1, ...TREE.map((f) => f.tokens || 0));   // scale the per-file weight bars to the heaviest file
   renderStats(); renderTree(''); renderRecent();
   $('#repo').textContent = STATS.files + ' files indexed';
+  checkFreshness();                     // has the tree moved under the index?
   openFromHash();                       // deep-link: #<path>:<line> (e.g. from recall)
 })();
 
@@ -855,6 +870,53 @@ $('#q').addEventListener('input', (e) => {
 $('#q').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); $('#results').hidden = true; $('#budget').textContent = ''; } });
 
 // search ⇄ refs mode
+// ── Is the index still true? ────────────────────────────────────────────────
+// lens serves an index of a tree that keeps moving underneath it. It used to say
+// nothing — a file you edited five minutes ago was still served as it was, and a
+// file you deleted was still in the tree, still in search results, pointing at
+// nothing. Now it checks, says what drifted, and can rebuild itself.
+async function checkFreshness() {
+  const el = $('#stale');
+  try {
+    const f = await api('/api/freshness');
+    if (!f.ok) { el.hidden = true; return; }
+    if (!f.stale) { el.hidden = true; return; }        // the index tells the truth — stay out of the way
+    const bits = [
+      f.counts.changed && `${f.counts.changed} changed`,
+      f.counts.added && `${f.counts.added} new`,
+      f.counts.removed && `${f.counts.removed} deleted`,
+    ].filter(Boolean).join(' · ');
+    el.hidden = false;
+    el.classList.remove('ok');
+    el.innerHTML = `<div class="st-l">⚠ index is stale</div>
+      <div class="st-d">${esc(bits)} since you indexed. Search and the tree are answering from the old tree.</div>
+      <button id="reindex">↻ re-index</button>`;
+  } catch { el.hidden = true; }
+}
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('#reindex'); if (!btn) return;
+  btn.disabled = true; btn.textContent = '↻ indexing…';
+  try {
+    const r = await fetch('/api/index', { method: 'POST' }).then((x) => x.json());
+    if (r.error) throw new Error(r.error);
+    // rebuild everything the old index was feeding
+    const [st, mp] = await Promise.all([api('/api/stats'), api('/api/map')]);
+    STATS = st; TREE = mp.tree;
+    maxFileTokens = Math.max(1, ...TREE.map((f) => f.tokens || 0));
+    renderStats(); renderTree($('#filter').value || ''); renderRecent();
+    $('#repo').textContent = STATS.files + ' files indexed';
+    if (mode === 'map') renderTreemap();
+    const el = $('#stale');
+    el.classList.add('ok');
+    el.innerHTML = `<div class="st-l">✓ index rebuilt</div>
+      <div class="st-d">${r.indexed} re-read · ${r.removed} forgotten · ${STATS.files} files now indexed.</div>`;
+    setTimeout(() => { el.hidden = true; }, 4000);
+  } catch (err) {
+    btn.disabled = false; btn.textContent = '↻ re-index';
+    $('#stale').querySelector('.st-d').textContent = String(err.message || err);
+  }
+});
+
 // ── Treemap: where the repo's tokens actually are ───────────────────────────
 // The whole point of lens is not reading files whole. The tree tells you a file
 // is heavy; the treemap tells you where the repo's MASS is — area is ~tokens,

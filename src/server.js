@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname, normalize } from 'node:path';
-import { search, references, outline, readLines, map, stats, isIndexed, fileMeta } from './core.js';
+import { search, references, outline, readLines, map, stats, isIndexed, fileMeta, freshness, indexPath } from './core.js';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(__dir, '..', 'public');
@@ -37,6 +37,9 @@ const api = {
     const r = readLines(q.path, q.start ? +q.start : 1, q.end ? +q.end : undefined);
     return { ...r, meta: fileMeta(q.path) };
   },
+  // Is the index still true? The web view asks so it can say "3 files changed"
+  // rather than quietly serving a stale answer.
+  '/api/freshness': () => freshness('.'),
   '/api/health': () => ({ ok: true, service: 'lens', ts: new Date().toISOString() }),
 };
 
@@ -61,9 +64,27 @@ export function createLensServer() {
   return createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,OPTIONS' });
+      res.writeHead(204, { 'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
       return res.end();
     }
+
+    // Re-index. Everything else here is read-only over the index; this rebuilds it,
+    // so it is a POST — a GET must never be able to make the server walk your disk.
+    // It indexes the directory the server was started in, which is the directory the
+    // index's paths are relative to.
+    if (url.pathname === '/api/index') {
+      if (req.method !== 'POST') return json(res, 405, { error: 'use POST' });
+      try {
+        const full = url.searchParams.get('reindex') === '1';
+        const r = indexPath('.', { reindex: full });
+        // NB: don't spread freshness() over this — it has its own `removed` (the list
+        // of paths), which would clobber indexPath's `removed` (how many it forgot).
+        const f = freshness('.');
+        return json(res, 200, { ...r, stale: f.stale, counts: f.counts });
+      } catch (e) { return json(res, 400, { error: String(e.message || e) }); }
+    }
+
     const handler = api[url.pathname];
     if (handler) {
       const q = Object.fromEntries(url.searchParams.entries());

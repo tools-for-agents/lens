@@ -90,7 +90,58 @@ export function indexPath(target, { reindex = false } = {}) {
       rel, lang, lines.length, s.size, Math.floor(s.mtimeMs), new Date().toISOString());
     indexed++;
   }
-  return { indexed, skipped, chunks, total_files: stats().files };
+
+  // Forget files that are gone. Indexing only ever added or updated, so a deleted
+  // file stayed in the index forever — still listed in the tree, still returned by
+  // search, pointing at nothing. An index that never forgets is an index that lies.
+  let removed = 0;
+  if (st.isDirectory()) {
+    const onDisk = new Set(files.map((f) => relative(process.cwd(), f) || f));
+    const prefix = relative(process.cwd(), root);
+    for (const r of all(`SELECT path FROM files`)) {
+      const under = !prefix || prefix === '' || r.path === prefix || r.path.startsWith(prefix + '/');
+      if (!under || onDisk.has(r.path)) continue;
+      run(`DELETE FROM chunks WHERE path=?`, r.path);
+      run(`DELETE FROM files WHERE path=?`, r.path);
+      removed++;
+    }
+  }
+  return { indexed, skipped, removed, chunks, total_files: stats().files };
+}
+
+// Is the index still telling the truth about the tree? Compares what was indexed
+// against what is on disk now — so the web view can say "3 files changed since you
+// indexed" instead of quietly serving a stale answer.
+export function freshness(target = '.') {
+  const root = resolve(target);
+  let st;
+  try { st = statSync(root); } catch { return { ok: false, error: `path not found: ${target}` }; }
+
+  const onDisk = new Map();
+  const files = st.isDirectory() ? [...walk(root, root)] : [root];
+  for (const f of files) {
+    const ext = extname(f).toLowerCase();
+    if (BINARY_EXT.has(ext)) continue;
+    let s; try { s = statSync(f); } catch { continue; }
+    if (s.size > MAX_BYTES || s.size === 0) continue;
+    onDisk.set(relative(process.cwd(), f) || f, Math.floor(s.mtimeMs));
+  }
+
+  const indexed = new Map(all(`SELECT path, mtime FROM files`).map((r) => [r.path, r.mtime]));
+  const changed = [], added = [], removed = [];
+  for (const [path, mtime] of onDisk) {
+    if (!indexed.has(path)) added.push(path);
+    else if (indexed.get(path) !== mtime) changed.push(path);
+  }
+  for (const path of indexed.keys()) if (!onDisk.has(path)) removed.push(path);
+
+  return {
+    ok: true,
+    stale: changed.length + added.length + removed.length,
+    changed: changed.slice(0, 50), added: added.slice(0, 50), removed: removed.slice(0, 50),
+    counts: { changed: changed.length, added: added.length, removed: removed.length },
+    indexed_files: indexed.size,
+  };
 }
 
 // ── Search ──────────────────────────────────────────────────────────────────

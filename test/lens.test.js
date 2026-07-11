@@ -160,3 +160,47 @@ test('serve: stats advertises where cortex lives, so the reader can capture to i
     assert.ok(s.files > 0, 'and still carries the index stats');
   } finally { server.close(); }
 });
+
+test('freshness sees the tree drift, and re-indexing forgets what is gone', async (t) => {
+  const { mkdtempSync, writeFileSync, rmSync, mkdirSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { freshness, indexPath, search, map } = await import('../src/core.js');
+
+  const dir = mkdtempSync(join(tmpdir(), 'lens-fresh-'));
+  const prevCwd = process.cwd();
+  process.chdir(dir);                       // the index stores paths relative to cwd
+  t.after(() => { process.chdir(prevCwd); try { rmSync(dir, { recursive: true, force: true }); } catch {} });
+
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'keep.js'), 'export const keep = () => "unicorn-keep";\n');
+  writeFileSync(join(dir, 'src', 'doomed.js'), 'export const doomed = () => "unicorn-doomed";\n');
+
+  const first = indexPath('.');
+  assert.ok(first.indexed >= 2);
+  assert.equal(freshness('.').stale, 0, 'a fresh index is not stale');
+  assert.ok(search('unicorn-doomed').results.length > 0, 'the doomed file is findable');
+
+  // the tree drifts underneath the index
+  await new Promise((r) => setTimeout(r, 1100));                 // mtime has 1s granularity on some fs
+  writeFileSync(join(dir, 'src', 'keep.js'), 'export const keep = () => "unicorn-changed";\n');
+  writeFileSync(join(dir, 'src', 'fresh.js'), 'export const fresh = () => 1;\n');
+  rmSync(join(dir, 'src', 'doomed.js'));
+
+  const f = freshness('.');
+  assert.equal(f.counts.changed, 1, 'it sees the edited file');
+  assert.equal(f.counts.added, 1, 'and the new one');
+  assert.equal(f.counts.removed, 1, 'and the deleted one');
+  assert.equal(f.stale, 3);
+
+  // re-index: the edit lands, the new file lands, and the deleted one is FORGOTTEN
+  const second = indexPath('.');
+  assert.equal(second.removed, 1, 'the deleted file was pruned from the index');
+  assert.equal(freshness('.').stale, 0, 'the index tells the truth again');
+  assert.ok(search('unicorn-changed').results.some((r) => r.path === 'src/keep.js'), 'the edit is searchable');
+  // NB: lens tokenizes, so "unicorn-doomed" is an OR of [unicorn, doomed] and will
+  // still match keep.js — the point is that no hit can come from the deleted FILE.
+  assert.ok(!search('unicorn-doomed').results.some((r) => r.path === 'src/doomed.js'),
+    'the deleted file is gone from search, not just from disk');
+  assert.ok(!map().tree.some((f) => f.path === 'src/doomed.js'), 'and gone from the file tree');
+});
