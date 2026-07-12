@@ -257,7 +257,7 @@
   /* capture wears cortex's violet, not lens's teal: it is the brain's action */
   .ch-btn.brain { color:#a78bfa; border-color:color-mix(in srgb,#a78bfa 34%,var(--line)); }
   .ch-btn.brain:hover, .ch-btn.brain.done { color:#a78bfa; border-color:#a78bfa; background:color-mix(in srgb,#a78bfa 12%,var(--panel-2)); }
-  .ch-btn:disabled { opacity:.65; cursor:default; }
+  .ch-btn:disabled {  cursor:default; opacity:1 !important; color:var(--muted) !important; background:var(--panel-2) !important; border-color:var(--line) !important; cursor:not-allowed;}
   .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 
   /* the index has drifted from the tree — say so, and offer to fix it */
@@ -269,7 +269,7 @@
     color:var(--amber); background:color-mix(in srgb, var(--amber) 12%, transparent);
     border:1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius:8px; padding: 4px 0; }
   .stale button:hover { background:color-mix(in srgb, var(--amber) 22%, transparent); }
-  .stale button:disabled { opacity:.6; cursor:default; }
+  .stale button:disabled {  cursor:default; opacity:1 !important; color:var(--muted) !important; background:var(--panel-2) !important; border-color:var(--line) !important; cursor:not-allowed;}
   .stale.ok { background:color-mix(in srgb, var(--accent) 8%, var(--bg-2)); }
   .stale.ok .st-l { color:var(--accent); }
 
