@@ -517,7 +517,7 @@ function busy(on) {
     if (busyTimer) return;
     // 300ms: below this a human reads it as "instant", and a pill that flashes on every
     // fast request is noise that teaches you to ignore the one time it matters.
-    busyTimer = setTimeout(() => { const p = busyPill(); p.hidden = false; }, 300);
+    busyTimer = setTimeout(() => {}, 300);   // TEMP: the old silence
   } else {
     clearTimeout(busyTimer); busyTimer = null;
     const p = document.getElementById('busypill');
