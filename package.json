@@ -1,10 +1,46 @@
 {
-  "name": "lens-agent",
+  "name": "@tools-for-agents/lens",
   "version": "0.1.0",
-  "description": "Token-efficient code/doc retrieval for agents: FTS5 search, symbol outlines and surgical reads instead of reading whole files. Zero dependencies.",
+  "description": "Token-efficient code retrieval for agents: FTS5 search, symbol outlines, surgical reads.",
   "type": "module",
-  "bin": { "lens": "src/cli.js" },
-  "engines": { "node": ">=22" },
-  "scripts": { "serve": "node src/cli.js serve", "mcp": "node mcp/mcp-server.js", "test": "node --test" },
-  "license": "MIT"
+  "bin": {
+    "lens": "src/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "serve": "node src/cli.js serve",
+    "mcp": "node mcp/mcp-server.js",
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "mcpName": "io.github.tools-for-agents/lens",
+  "files": [
+    "src",
+    "mcp",
+    "public",
+    "tokens.json",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tools-for-agents/lens.git"
+  },
+  "homepage": "https://tools-for-agents.github.io",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "ai-agents",
+    "agent-tools",
+    "claude",
+    "llm",
+    "zero-dependency",
+    "lens"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

@@ -56,6 +56,9 @@ try {
   } else if (cmd === 'serve') {
     const { serve } = await import('./server.js');
     serve({ port: +flag('--port', process.env.LENS_PORT || 7900) });
+  } else if (cmd === 'mcp') {
+    // stdio JSON-RPC. The server starts on import: `npx @tools-for-agents/lens mcp`
+    await import('../mcp/mcp-server.js');
   } else {
     out(`lens — token-efficient code context for agents
 
