@@ -2,7 +2,7 @@
 // pull *just enough* context instead of reading whole files. Token-budgeted.
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { join, extname, relative, resolve, sep } from 'node:path';
-import { db, get, all, run, DB_PATH } from './db.js';
+import { writeDb, get, all, run, DB_PATH, storeExists } from './db.js';
 
 const IGNORE_DIRS = new Set(['.git', 'node_modules', '.lens', 'dist', 'build', 'out',
   '.next', 'coverage', 'vendor', 'target', '.venv', 'venv', '__pycache__', 'data', '.cache']);
@@ -54,7 +54,8 @@ export function indexPath(target, { reindex = false } = {}) {
   const files = st.isDirectory() ? [...walk(root, root)] : [root];
   let indexed = 0, skipped = 0, chunks = 0;
 
-  const tx = db.prepare.bind(db);
+  const d = writeDb();
+  const tx = d.prepare.bind(d);
   for (const file of files) {
     const ext = extname(file).toLowerCase();
     if (BINARY_EXT.has(ext)) { skipped++; continue; }
@@ -163,7 +164,7 @@ function ftsQuery(q) {
 // looking for, and believes it, and moves on. A confident wrong answer is worse than an
 // error, because nothing about it invites a second look.
 function requireIndex() {
-  const { n } = get(`SELECT COUNT(*) n FROM files`);
+  const n = get(`SELECT COUNT(*) n FROM files`)?.n ?? 0;
   if (n > 0) return;
   throw new Error(
     `nothing is indexed (${DB_PATH}), so there is nothing to search — this is NOT "no matches". `
@@ -344,9 +345,9 @@ export function map({ limit = 400 } = {}) {
 
 export function stats() {
   return {
-    files: get(`SELECT COUNT(*) n FROM files`).n,
-    chunks: get(`SELECT COUNT(*) n FROM chunks`).n,
-    total_lines: get(`SELECT COALESCE(SUM(lines),0) n FROM files`).n,
+    files: get(`SELECT COUNT(*) n FROM files`)?.n ?? 0,
+    chunks: get(`SELECT COUNT(*) n FROM chunks`)?.n ?? 0,
+    total_lines: get(`SELECT COALESCE(SUM(lines),0) n FROM files`)?.n ?? 0,
     languages: all(`SELECT lang, COUNT(*) n FROM files GROUP BY lang ORDER BY n DESC`),
   };
 }
