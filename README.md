@@ -92,13 +92,21 @@ A zero-dependency, IDE-style explorer for the same index the agent queries — s
 
 ## The agent toolkit
 
-`lens` is the **read-code** leg of the `tools-for-agents` toolkit:
+`lens` is the **read code** leg of **[tools-for-agents](https://tools-for-agents.github.io)** — an operating system for agents.
+Seven zero-dependency, MCP-native tools that form one loop:
 
-- 🛰️ [**agent-hq**](https://github.com/tools-for-agents/agent-hq) — coordinate (memory, kanban, dashboard)
-- 🔎 **lens** — read code (token-budgeted retrieval)
-- ⚒ [**anvil**](https://github.com/tools-for-agents/anvil) — run safely (sandboxed execution)
-- 🧠 [**cortex**](https://github.com/tools-for-agents/cortex) — remember (Obsidian-compatible second brain)
-- 🧭 [**scout**](https://github.com/tools-for-agents/scout) — read the web (clean, cached markdown)
-- 🎯 [**recall**](https://github.com/tools-for-agents/recall) — recall it all (one query across every store)
+| | | |
+|---|---|---|
+| 🛰️ | [agent-hq](https://github.com/tools-for-agents/agent-hq) | coordinate — shared memory, a kanban agents claim work from, a registry, a cost ledger |
+| 🔎 | **lens** | **read code** — token-budgeted retrieval — search, outlines, surgical reads |
+| ⚒ | [anvil](https://github.com/tools-for-agents/anvil) | run safely — a throwaway Docker sandbox: network off, capped, timed |
+| 🧠 | [cortex](https://github.com/tools-for-agents/cortex) | remember — an Obsidian-compatible second brain, wikilinked |
+| 🧭 | [scout](https://github.com/tools-for-agents/scout) | read the web — a URL becomes clean, cached, searchable markdown |
+| 🎯 | [recall](https://github.com/tools-for-agents/recall) | recall it all — one query across brain, team, reading and code |
+| 👁 | [iris](https://github.com/tools-for-agents/iris) | see — look at what you built, before you claim it works |
+
+**Reading this as an agent?** [`/llms.txt`](https://tools-for-agents.github.io/llms.txt) is the map, and
+[`/tools.json`](https://tools-for-agents.github.io/tools.json) hands you all **67 MCP tools** — every name, every
+description, every install command — in **one fetch**, without cloning anything.
 
 MIT licensed.
