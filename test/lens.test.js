@@ -274,3 +274,34 @@ test('search can be scoped to a directory — the glob the UI now sends', async 
     assert.equal(none.count, 0, 'a scope with no files finds nothing, not everything');
   } finally { server.close(); }
 });
+
+// ── A schema that promises a check nobody performs is worse than no schema ───────
+test('lens_search with no query says so, instead of crashing three layers down', async () => {
+  const { spawn } = await import('node:child_process');
+  const out = await new Promise((resolve) => {
+    const p = spawn('node', ['mcp/mcp-server.js'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    let buf = '';
+    const done = (v) => { try { p.kill('SIGKILL'); } catch {} resolve(v); };
+    setTimeout(() => done({}), 10000);
+    p.stdout.on('data', (d) => {
+      buf += d;
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const l of lines) {
+        let m; try { m = JSON.parse(l); } catch { continue; }
+        if (m.id === 3) done(m);
+      }
+    });
+    const send = (o) => p.stdin.write(JSON.stringify(o) + '\n');
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
+    send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'lens_search', arguments: {} } });
+  });
+
+  // It used to answer: "Cannot read properties of undefined (reading 'match')" — a
+  // TypeError from inside search(), handed to a model as if it were an answer.
+  const msg = out.error?.message || '';
+  assert.match(msg, /missing required argument/, 'it names the problem');
+  assert.match(msg, /"query"/, 'and the argument');
+  assert.match(msg, /looking for/, "and quotes the schema's own description of it, so the fix is in the sentence");
+  assert.doesNotMatch(msg, /Cannot read propert|is not a function/, 'and does not leak an internal crash');
+});
