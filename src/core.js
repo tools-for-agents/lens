@@ -210,7 +210,7 @@ export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
     let csql = `SELECT COUNT(*) n FROM chunks WHERE chunks MATCH ?`;
     const cargs = [m];
     if (path_glob) { csql += ` AND path GLOB ?`; cargs.push(path_glob); }
-    matched = get(csql, ...cargs).n;
+    matched = get(csql, ...cargs)?.n ?? 0;
   } catch { /* keep the floor */ }
 
   const withheld = Math.max(0, matched - results.length);
