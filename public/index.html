@@ -953,6 +953,24 @@ async function checkFreshness() {
     const f = await api('/api/freshness');
     if (!f.ok) { el.hidden = true; return; }
     if (!f.stale) { el.hidden = true; return; }        // the index tells the truth — stay out of the way
+
+    // "STALE" AND "NEVER EXISTED" ARE NOT THE SAME THING.
+    //
+    // With nothing indexed, freshness sees 14 files on disk and 0 in the index, calls that
+    // "14 new", and told a brand-new user their index was STALE — that it was "answering
+    // from the old tree". There is no old tree. They have never indexed anything, and the
+    // first sentence the tool ever says to them is false.
+    //
+    // Same bug as `lens_search` answering "0 hits" on a codebase nobody indexed: an empty
+    // thing described as if it were a thing.
+    if (!f.indexed_files) {
+      el.hidden = false;
+      el.classList.remove('ok');
+      el.innerHTML = `<div class="st-l">nothing is indexed yet</div>
+        <div class="st-d">lens reads code from an index, and there is not one here — this is not "no results". Index a directory and it will fill in.</div>
+        <button id="reindex">index this directory</button>`;
+      return;
+    }
     const bits = [
       f.counts.changed && `${f.counts.changed} changed`,
       f.counts.added && `${f.counts.added} new`,
