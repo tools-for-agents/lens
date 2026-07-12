@@ -2,7 +2,7 @@
 // pull *just enough* context instead of reading whole files. Token-budgeted.
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { join, extname, relative, resolve, sep } from 'node:path';
-import { db, get, all, run } from './db.js';
+import { db, get, all, run, DB_PATH } from './db.js';
 
 const IGNORE_DIRS = new Set(['.git', 'node_modules', '.lens', 'dist', 'build', 'out',
   '.next', 'coverage', 'vendor', 'target', '.venv', 'venv', '__pycache__', 'data', '.cache']);
@@ -153,7 +153,25 @@ function ftsQuery(q) {
   return terms.map((t) => `"${t}"`).join(' OR ');
 }
 
+// "Nothing is indexed" and "your code does not contain that" are the same sentence to a
+// caller, and they could not be more different. Opening a missing database CREATES it, so
+// a search before an index answered — cheerfully, authoritatively —
+//
+//     { "count": 0, "results": [] }
+//
+// An agent that forgets to index is told its codebase does not contain the thing it is
+// looking for, and believes it, and moves on. A confident wrong answer is worse than an
+// error, because nothing about it invites a second look.
+function requireIndex() {
+  const { n } = get(`SELECT COUNT(*) n FROM files`);
+  if (n > 0) return;
+  throw new Error(
+    `nothing is indexed (${DB_PATH}), so there is nothing to search — this is NOT "no matches". `
+    + `Index a directory first:  lens index <path>   (MCP: lens_index { path })`);
+}
+
 export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
+  requireIndex();
   // Harden numeric args: bad input (NaN from a non-numeric query param, ≤0)
   // falls back to the default. Unguarded, NaN k makes the SQL `LIMIT ?` bind
   // fail (→ error result) and `results.length >= NaN` never break / the budget
@@ -208,6 +226,7 @@ export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
 // candidate chunks; we then scan their lines for a whole-word match (deduping the
 // overlap between adjacent chunks). Cheap, exact, and clickable — code navigation.
 export function references(symbol, { limit = 400 } = {}) {
+  requireIndex();   // "no references to that symbol" and "nothing is indexed" are not the same answer
   // bad limit (NaN → never truncates; 0 → truncates on the first ref) → default
   limit = Number.isFinite(+limit) && +limit > 0 ? Math.floor(+limit) : 400;
   const term = (String(symbol).match(/[A-Za-z0-9_]+/) || [])[0];

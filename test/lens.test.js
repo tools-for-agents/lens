@@ -305,3 +305,48 @@ test('lens_search with no query says so, instead of crashing three layers down',
   assert.match(msg, /looking for/, "and quotes the schema's own description of it, so the fix is in the sentence");
   assert.doesNotMatch(msg, /Cannot read propert|is not a function/, 'and does not leak an internal crash');
 });
+
+// ── A confident wrong answer is worse than an error ──────────────────────────────
+test('searching before indexing is an ERROR, not "no matches"', async (t) => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const dir = mkdtempSync(join(tmpdir(), 'lens-noidx-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // A fresh process with a database that does not exist. Opening it CREATES it — which
+  // is why `lens_search` used to answer, cheerfully and authoritatively:
+  //     { "count": 0, "results": [] }
+  // An agent that forgot to index is told its codebase does not contain the thing it is
+  // looking for. It believes that, and moves on. Nothing about a confident empty result
+  // invites a second look.
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync('node', ['src/cli.js', 'search', 'sqlite'], {
+    encoding: 'utf8', env: { ...process.env, LENS_DB: join(dir, 'index.db') },
+  });
+  const said = r.stdout + r.stderr;
+  assert.match(said, /nothing is indexed/i, 'it says the index is empty');
+  assert.match(said, /NOT "no matches"/, 'and says explicitly that this is not the same as no matches');
+  assert.match(said, /lens index/, 'and names the command that fixes it');
+  assert.notEqual(r.status, 0, 'and it is an error, so a caller cannot mistake it for a result');
+});
+
+test('...but a genuine zero-result search still says zero', async (t) => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+
+  const dir = mkdtempSync(join(tmpdir(), 'lens-idx-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const env = { ...process.env, LENS_DB: join(dir, 'index.db') };
+
+  spawnSync('node', ['src/cli.js', 'index', 'src'], { encoding: 'utf8', env });
+  const r = spawnSync('node', ['src/cli.js', 'search', 'zzzznotarealtokenanywhere'], { encoding: 'utf8', env });
+
+  // The guard must not turn an honest "I looked, and it is not there" into an error.
+  // That would be the same lie in the other direction.
+  assert.equal(r.status, 0, 'an indexed search that finds nothing is a result, not a failure');
+  assert.match(r.stdout, /0 hits/, 'and it says so plainly');
+});
