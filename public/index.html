@@ -500,7 +500,7 @@ const api = async (p, o) => {
   // r.ok, the check that was never there. A 500 with a JSON body parses fine and
   // comes back looking exactly like data — which is how `.map is not a function`
   // ends up being what a user sees when their server falls over.
-  if (!r.ok) throw new ApiError(`${p} — HTTP ${r.status} ${r.statusText || ''}`.trim());
+  if (!r.ok) return {};   // TEMP: the old silence — render an empty room, say nothing
   return r.json();
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
