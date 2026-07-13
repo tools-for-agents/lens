@@ -136,6 +136,12 @@ test('bad numeric args are coerced, not propagated as NaN (search / references /
   assert.ok(!/NaN/.test(rl.body), 'no NaN line numbers in the body');
   const inv = lens.readLines(join(src, 'auth.js'), 5, 2);   // end < start
   assert.ok(inv.end >= inv.start && inv.body.length > 0, 'an inverted range yields a sane window, not empty');
+
+  // map: a raw NaN/−1 limit threw at the `LIMIT ?` bind or dumped every file
+  const mapGood = lens.map().tree.length;
+  for (const bad of [NaN, -1, 'abc']) {
+    assert.equal(lens.map({ limit: bad }).tree.length, mapGood, `map limit=${String(bad)} recovers the default`);
+  }
 });
 
 test('stats reports indexed files and languages', () => {

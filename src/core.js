@@ -413,6 +413,8 @@ export function readLines(path, start = 1, end) {
 
 // ── Repo map + stats ──────────────────────────────────────────────────────────
 export function map({ limit = 400 } = {}) {
+  // bad limit (NaN → SQLite `LIMIT ?` bind throws "datatype mismatch"; −1 → LIMIT −1 dumps every file) → default
+  limit = Number.isFinite(+limit) && +limit > 0 ? Math.floor(+limit) : 400;
   const rows = all(`SELECT path, lang, lines, bytes FROM files ORDER BY path LIMIT ?`, limit);
   // token estimate per file (≈4 chars/token, same ratio as estTokens) — the web
   // tree sizes a weight bar by it so heavy-to-read files stand out
