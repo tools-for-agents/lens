@@ -80,6 +80,7 @@ A zero-dependency, IDE-style explorer for the same index the agent queries — s
 | `lens_outline` | Get a file's symbol map (functions/classes/headings) with line numbers. |
 | `lens_read` | Read an exact line range. |
 | `lens_map` | List indexed files + language breakdown. |
+| `lens_freshness` | Is the index stale? What changed / was added / removed since you indexed. |
 | `lens_stats` | Index statistics. |
 
 ## How it works
@@ -106,7 +107,7 @@ Seven zero-dependency, MCP-native tools that form one loop:
 | 👁 | [iris](https://github.com/tools-for-agents/iris) | see — look at what you built, before you claim it works |
 
 **Reading this as an agent?** [`/llms.txt`](https://tools-for-agents.github.io/llms.txt) is the map, and
-[`/tools.json`](https://tools-for-agents.github.io/tools.json) hands you all **67 MCP tools** — every name, every
+[`/tools.json`](https://tools-for-agents.github.io/tools.json) hands you all **70 MCP tools** — every name, every
 description, every install command — in **one fetch**, without cloning anything.
 
 MIT licensed.
