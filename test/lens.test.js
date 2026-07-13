@@ -469,3 +469,49 @@ test('an index poisoned by the OLD lens is cleaned up on the next run', () => {
     'the key an earlier lens swallowed is gone from the index');
   rmSync(other, { recursive: true, force: true });
 });
+
+// THE DENYLIST IS THE EASY HALF. This is the other one.
+//
+// Every credential file in the test above (.env, .npmrc, *.pem, credentials.json) is caught
+// by NAME. But the rule that actually protects you is the one underneath: a dotfile is
+// skipped unless it is explicitly known-safe — "because the next secret filename has not
+// been invented yet".
+//
+// Nothing was guarding that rule. A canary mutant deleted the default-deny outright
+// (`name.startsWith('.') && !DOT_ALLOW.has(name)` -> false) and the ENTIRE SUITE STAYED
+// GREEN, because every secret in it was on the list anyway. So the half of the fix that
+// covers the unknown was covered by nothing.
+//
+// These three are real credential files, and NOT ONE of them is named by SECRET_FILES or
+// matched by SECRET_RE. The default-deny is the only thing standing between them and a
+// model's context window.
+test('a credential dotfile NOBODY put on the denylist is still not indexed', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'lens-unknown-'));
+  mkdirSync(join(repo, 'src'), { recursive: true });
+  mkdirSync(join(repo, '.github', 'workflows'), { recursive: true });
+  writeFileSync(join(repo, 'src', 'app.js'), 'export const handler = () => "hello";\n');
+  writeFileSync(join(repo, '.pypirc'), '[pypi]\nusername = __token__\npassword = pypi-AgEIcHlwaSZEKRET\n');
+  writeFileSync(join(repo, '.dockercfg'), '{"auths":{"registry.io":{"auth":"aGVsbG86ZG9ja2VyU0VLUklU"}}}\n');
+  writeFileSync(join(repo, '.terraformrc'), 'credentials "app.terraform.io" { token = "SEKRETtfcloud" }\n');
+  // …and a dotfile that IS known-safe must still be read, or the rule is just a broken tool.
+  writeFileSync(join(repo, '.github', 'workflows', 'ci.yml'), 'name: ci\njobs:\n  test:\n    runs-on: ubuntu-latest\n');
+
+  process.env.LENS_DB = join(work, 'unknown-dotfiles.db');
+  lens.indexPath(repo);
+
+  for (const q of ['SEKRET', 'pypi-AgEIcHlwaSZEKRET', 'token', 'auths', 'password']) {
+    const { results } = lens.search(q, { max_tokens: 2000 });
+    const leaked = results.filter((h) => /\.pypirc|\.dockercfg|\.terraformrc/.test(h.path));
+    assert.deepEqual(leaked.map((h) => h.path), [],
+      `searching "${q}" surfaced a credential dotfile that is on no denylist`);
+  }
+
+  const { results: code } = lens.search('handler', { max_tokens: 2000 });
+  assert.ok(code.some((h) => h.path.endsWith('app.js')), 'the real source is still indexed');
+
+  const { results: yml } = lens.search('ubuntu-latest', { max_tokens: 2000 });
+  assert.ok(yml.some((h) => h.path.includes('.github')),
+    'a KNOWN-SAFE dotdir is still indexed — default-deny must not mean deny-everything');
+
+  rmSync(repo, { recursive: true, force: true });
+});
