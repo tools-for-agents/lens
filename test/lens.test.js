@@ -88,6 +88,8 @@ test('outline classifies each symbol by kind (drives the web kind filter)', () =
   assert.equal(lens.symbolKind('export const fetchUser = async (id) => {', 'javascript'), 'function', 'arrow-assigned const → function');
   assert.equal(lens.symbolKind('const MAX_RETRIES = 5;', 'javascript'), 'const', 'plain const → const');
   assert.equal(lens.symbolKind('export interface Opts {', 'typescript'), 'type', 'interface → type');
+  // and the total-function guarantee: a symbol it can't type still gets a kind, never a throw
+  assert.equal(lens.symbolKind('impl Display for Foo {', 'rust'), 'other', 'an unclassifiable symbol degrades to other, not undefined');
 });
 
 test('readLines returns an exact, numbered range', () => {
