@@ -215,8 +215,10 @@ export function freshness(target = '.') {
 // ── Search ──────────────────────────────────────────────────────────────────
 // FTS5 MATCH with bm25 ranking. Returns token-budgeted, ranked snippets.
 function ftsQuery(q) {
-  // turn a free-text query into a safe FTS5 OR query of bare terms
-  const terms = q.match(/[A-Za-z0-9_]+/g) || [];
+  // turn a free-text query into a safe FTS5 OR query of bare terms. \p{L}\p{N} (not
+  // [A-Za-z0-9]) so a query in any script — Turkish, Cyrillic, CJK — tokenizes the SAME
+  // way unicode61 indexed the code; ASCII-only stripped every non-Latin term to nothing.
+  const terms = q.match(/[\p{L}\p{N}_]+/gu) || [];
   if (!terms.length) return null;
   return terms.map((t) => `"${t}"`).join(' OR ');
 }
@@ -297,7 +299,7 @@ export function references(symbol, { limit = 400 } = {}) {
   requireIndex();   // "no references to that symbol" and "nothing is indexed" are not the same answer
   // bad limit (NaN → never truncates; 0 → truncates on the first ref) → default
   limit = Number.isFinite(+limit) && +limit > 0 ? Math.floor(+limit) : 400;
-  const term = (String(symbol).match(/[A-Za-z0-9_]+/) || [])[0];
+  const term = (String(symbol).match(/[\p{L}\p{N}_]+/u) || [])[0];
   if (!term) return { symbol: null, count: 0, files: [] };
   let rows;
   try { rows = all(`SELECT path, body, lang, start FROM chunks WHERE chunks MATCH ? ORDER BY path, start`, `"${term}"`); }

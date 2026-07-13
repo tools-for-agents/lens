@@ -32,6 +32,19 @@ test('search returns ranked snippets within a token budget', () => {
   assert.ok(r.tokens <= 800);
 });
 
+test('search finds code & docs in any script — the index is unicode61, so the query must be too', () => {
+  // Chunks are indexed with unicode61 (every script); a query tokenizer that kept only
+  // [A-Za-z0-9] threw away Turkish/Cyrillic/CJK terms and found nothing that was indexed.
+  const i18n = join(work, 'i18n');
+  mkdirSync(i18n, { recursive: true });
+  writeFileSync(join(i18n, 'seyahat.md'), `# İstanbul Rehberi\n\nAnkara ve Москва ve 日本語 üzerine notlar.\n`);
+  lens.indexPath(i18n);
+  for (const q of ['İstanbul', 'Москва', '日本語']) {
+    assert.ok(lens.search(q).results.some((x) => /seyahat\.md$/.test(x.path)),
+      `a ${q} query must find the file that contains it`);
+  }
+});
+
 // A budget that hides hits while reporting itself complete is worse than no
 // budget. Whatever it squeezes out, it must OWN — say how many, and say WHICH
 // ceiling did it, because raising the wrong one changes nothing.
