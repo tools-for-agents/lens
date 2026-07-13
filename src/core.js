@@ -9,6 +9,48 @@ const IGNORE_DIRS = new Set(['.git', 'node_modules', '.lens', 'dist', 'build', '
 const BINARY_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip',
   '.gz', '.tar', '.mp4', '.mp3', '.wav', '.woff', '.woff2', '.ttf', '.eot', '.so', '.dylib',
   '.o', '.a', '.bin', '.exe', '.class', '.jar', '.lock', '.db', '.wasm']);
+// LENS WAS INDEXING YOUR .env AND HANDING THE KEYS BACK IN SEARCH RESULTS.
+//
+// The walk skipped ignored DIRECTORIES, but it yielded every FILE it met — and a dotfile
+// is just a file. So `lens index .` on any ordinary repo swallowed .env, .env.local,
+// .npmrc, id_rsa, credentials — and then `lens search secret` served them up, in the
+// terminal, in the web UI, and through MCP straight into a model's context window.
+//
+//     ▸ /repo/.env:1-3  [text]  ~24tok
+//     AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+//     STRIPE_SECRET=sk_live_51H8xample
+//
+// That is the whole point of lens — pointing an agent at a repo — so this was not an edge
+// case, it was the main path. Twenty green tests and seven CI gates never saw it, because
+// no test had ever indexed a repo with a secret in it. The kit's own repos have no .env,
+// so it worked perfectly on the only trees it was ever run against.
+//
+// Rule: a secret is not "code an agent needs to read". Dotfiles are skipped unless they are
+// explicitly known-safe, and known credential filenames are skipped whether or not they
+// carry a dot. This is a denylist AND a default-deny on dotfiles, because the next secret
+// filename has not been invented yet.
+const DOT_ALLOW = new Set(['.github', '.gitlab', '.vscode', '.config']);
+const SECRET_FILES = new Set([
+  '.env', '.npmrc', '.netrc', '.pgpass', '.htpasswd', 'credentials', 'id_rsa', 'id_dsa',
+  'id_ecdsa', 'id_ed25519', 'secrets.json', 'secrets.yaml', 'secrets.yml',
+  'credentials.json', 'service-account.json', 'serviceaccount.json',
+]);
+const SECRET_RE = /^\.env(\..*)?$|^\.?secrets?[-_.]|\.(pem|key|p12|pfx|keystore|jks|ppk)$|(^|[-_.])credentials?([-_.]|$)/i;
+
+export function isSecretPath(name) {
+  const n = String(name);
+  return SECRET_FILES.has(n) || SECRET_RE.test(n);
+}
+
+// A dotfile is skipped unless it is on the allow list. `.env.production` is a dotfile;
+// so is the next one somebody invents.
+function skipEntry(name, isDir) {
+  if (IGNORE_DIRS.has(name)) return true;
+  if (isSecretPath(name)) return true;
+  if (name.startsWith('.') && !DOT_ALLOW.has(name)) return true;
+  return false;
+}
+
 const MAX_BYTES = 1_500_000;
 const CHUNK_LINES = 50;
 const OVERLAP = 6;
@@ -33,16 +75,13 @@ function* walk(dir, root) {
   let entries;
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
-    if (e.name.startsWith('.') && e.name !== '.github') {
-      if (IGNORE_DIRS.has(e.name)) continue;
-    }
+    // One rule, applied to files and directories alike. The old code had TWO checks — a
+    // dead one for dotfiles that only ever consulted the directory ignore-list, and a real
+    // one that ran for directories only. Files walked straight through both.
+    if (skipEntry(e.name, e.isDirectory())) continue;
     const full = join(dir, e.name);
-    if (e.isDirectory()) {
-      if (IGNORE_DIRS.has(e.name)) continue;
-      yield* walk(full, root);
-    } else if (e.isFile()) {
-      yield full;
-    }
+    if (e.isDirectory()) yield* walk(full, root);
+    else if (e.isFile()) yield full;
   }
 }
 
@@ -51,11 +90,39 @@ export function indexPath(target, { reindex = false } = {}) {
   const root = resolve(target);
   let st;
   try { st = statSync(root); } catch { throw new Error(`path not found: ${target}`); }
+  // Naming a secret file directly gets the same refusal as reading one. Fixing the walk
+  // stops lens FINDING them; this stops it being handed one.
+  if (!st.isDirectory() && isSecretPath(root.split(sep).pop())) {
+    throw new Error(`refusing to index ${root.split(sep).pop()}: that looks like a credentials file.`);
+  }
   const files = st.isDirectory() ? [...walk(root, root)] : [root];
   let indexed = 0, skipped = 0, chunks = 0;
 
   const d = writeDb();
   const tx = d.prepare.bind(d);
+
+  // AND EVICT THE SECRETS AN EARLIER LENS ALREADY SWALLOWED.
+  //
+  // Fixing the walk protects the next index. It does nothing for the one already on disk:
+  // anyone who ran the old lens has an .lens/index.db with their .env inside it, and it
+  // will keep answering searches with it forever. A fix that only protects new users is
+  // half a fix. So every index run also cleans up after the version that came before it.
+  // No blanket catch here. The first cut of this had one, and it swallowed my own bug:
+  // `run` is variadic, I passed an array, it threw "Unknown named parameter", and the
+  // catch ate it — so the eviction silently did nothing and the secrets stayed searchable
+  // while the code claimed to be removing them. A cleanup that fails quietly is worse than
+  // no cleanup: it is a promise that the keys are gone when they are not.
+  let evicted = 0;
+  for (const row of all('SELECT DISTINCT path FROM files')) {
+    if (!isSecretPath(String(row.path).split(sep).pop())) continue;
+    run('DELETE FROM chunks WHERE path = ?', row.path);
+    run('DELETE FROM files WHERE path = ?', row.path);
+    evicted++;
+  }
+  if (evicted) {
+    process.stderr.write(`lens: evicted ${evicted} credential file(s) that an earlier version had indexed. `
+      + `They were searchable until now — rotate anything that was in them.\n`);
+  }
   for (const file of files) {
     const ext = extname(file).toLowerCase();
     if (BINARY_EXT.has(ext)) { skipped++; continue; }
@@ -322,6 +389,16 @@ export function readLines(path, start = 1, end) {
   // NaN → NaN line numbers and a broken slice; coerce to sane integers first.
   start = Number.isFinite(+start) && +start >= 1 ? Math.floor(+start) : 1;
   end = Number.isFinite(+end) && +end >= 1 ? Math.floor(+end) : undefined;
+  // And refuse to read one out loud even when asked by name. Keeping secrets out of the
+  // INDEX stops lens volunteering them; this stops it handing them over on request. `read`
+  // is an MCP tool — the caller is a model, which can be talked into asking for anything,
+  // and "the agent asked for it" is not consent from the person whose key it is.
+  const base = resolve(path).split(sep).pop();
+  if (isSecretPath(base)) {
+    throw new Error(`refusing to read ${base}: that looks like a credentials file, and lens hands what it `
+      + `reads to a model. If you truly need it, open it yourself — this tool will not be the one that leaks it.`);
+  }
+
   let text;
   try { text = readFileSync(resolve(path), 'utf8'); } catch { throw new Error(`cannot read ${path}`); }
   const lines = text.split('\n');

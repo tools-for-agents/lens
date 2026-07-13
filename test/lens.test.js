@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { run } from '../src/db.js';
 
 const work = mkdtempSync(join(tmpdir(), 'lens-test-'));
 process.env.LENS_DB = join(work, 'index.db');
@@ -402,4 +403,69 @@ test('nothing the MCP server can reach is allowed to print to stdout', async () 
   assert.ok(seen.size >= 1, 'the entry point was found');
   assert.deepEqual(offenders, [],
     'stdout is the protocol — one stray print desyncs every agent session:\n  ' + offenders.join('\n  '));
+});
+
+// ── lens was indexing .env and handing the keys back ────────────────────────────────
+test('a repo with secrets in it: lens indexes the code and NOT the credentials', () => {
+  // This is the main path, not an edge case: pointing an agent at a repo is the entire
+  // purpose of lens. The walk skipped ignored DIRECTORIES but yielded every FILE it met,
+  // and a dotfile is just a file — so `lens index .` swallowed .env and `lens search`
+  // served it back, in the terminal, in the web UI, and through MCP into a model's
+  // context. Twenty green tests never saw it, because no test had ever indexed a repo
+  // with a secret in it, and the kit's own repos have no .env.
+  const repo = mkdtempSync(join(tmpdir(), 'lens-secrets-'));
+  mkdirSync(join(repo, 'src'), { recursive: true });
+  writeFileSync(join(repo, 'src', 'app.js'), 'export const handler = () => "hello";\n');
+  writeFileSync(join(repo, '.env'), 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIexampleKEY\n');
+  writeFileSync(join(repo, '.env.production'), 'STRIPE_SECRET=sk_live_51H8xample\n');
+  writeFileSync(join(repo, '.npmrc'), '//registry.npmjs.org/:_authToken=npm_sekrit\n');
+  writeFileSync(join(repo, 'server.pem'), '-----BEGIN PRIVATE KEY-----\nMIIEv\n');
+  writeFileSync(join(repo, 'credentials.json'), '{"private_key":"-----BEGIN PRIVATE KEY-----"}\n');
+
+  const db = join(work, 'secrets.db');
+  process.env.LENS_DB = db;
+  lens.indexPath(repo);
+
+  // Nothing that looks like a credential may be in the index, under any query.
+  for (const q of ['SECRET', 'sk_live', 'authToken', 'PRIVATE KEY', 'AWS']) {
+    const { results } = lens.search(q, { max_tokens: 2000 });
+    const leaked = results.filter((h) => /\.env|\.npmrc|\.pem|credentials/.test(h.path));
+    assert.deepEqual(leaked.map((h) => h.path), [], `searching "${q}" surfaced a credentials file`);
+  }
+
+  // …and the actual code is still there, or the fix is just a broken tool.
+  const { results: code } = lens.search('handler', { max_tokens: 2000 });
+  assert.ok(code.some((h) => h.path.endsWith('app.js')), 'the real source file is still indexed');
+
+  // And it refuses to read one out loud even when asked for by name — `read` is an MCP
+  // tool, and "the model asked for it" is not consent from the person whose key it is.
+  assert.throws(() => lens.readLines(join(repo, '.env')), /refusing to read/,
+    'reading a credentials file by name is refused');
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('an index poisoned by the OLD lens is cleaned up on the next run', () => {
+  // Fixing the walk protects the next index. It does nothing for the one already on disk:
+  // anyone who ran the old lens has their .env sitting in .lens/index.db, and it will keep
+  // answering searches with it forever. A fix that only protects new users is half a fix.
+  const db = join(work, 'poisoned.db');
+  process.env.LENS_DB = db;
+
+  // Forge exactly what the old walk would have left behind.
+  run('INSERT OR REPLACE INTO files (path, lang, lines, bytes, mtime, indexed_at) VALUES (?,?,?,?,?,?)',
+    '/repo/.env', 'text', 1, 40, 0, new Date(0).toISOString());
+  run('INSERT INTO chunks (path, body, lang, start, "end") VALUES (?,?,?,?,?)',
+    '/repo/.env', 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIexampleKEY', 'text', 1, 1);
+  assert.ok(lens.search('wJalrXUtnFEMIexampleKEY', { max_tokens: 500 }).results.length >= 1,
+    'precondition: the forged index really does surface the key');
+
+  // Indexing anything at all — even an unrelated directory — must clean it out.
+  const other = mkdtempSync(join(tmpdir(), 'lens-other-'));
+  writeFileSync(join(other, 'x.js'), 'export const x = 1;\n');
+  lens.indexPath(other);
+
+  assert.deepEqual(lens.search('wJalrXUtnFEMIexampleKEY', { max_tokens: 500 }).results, [],
+    'the key an earlier lens swallowed is gone from the index');
+  rmSync(other, { recursive: true, force: true });
 });
