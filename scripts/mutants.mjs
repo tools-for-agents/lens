@@ -44,6 +44,12 @@ const CANARIES = [
     find: '  if (n > 0) return;',
     into: '  if (n >= 0) return;',
   },
+  {
+    why: 'node_modules is not your code — without IGNORE_DIRS every search comes back full of vendor internals',
+    file: 'src/core.js',
+    find: '  if (IGNORE_DIRS.has(name)) return true;',
+    into: '  if (IGNORE_DIRS.has(name)) return false;',
+  },
 ];
 
 const run = () => spawnSync('npm', ['test'], { encoding: 'utf8', timeout: 300_000 }).status;

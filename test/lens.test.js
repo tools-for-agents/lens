@@ -515,3 +515,48 @@ test('a credential dotfile NOBODY put on the denylist is still not indexed', () 
 
   rmSync(repo, { recursive: true, force: true });
 });
+
+// lens EXISTS TO GIVE AN AGENT *YOUR* CODE — not the code of four hundred strangers.
+//
+// The walk skips node_modules, dist, build, .git and friends. NOTHING WAS GUARDING THAT: a
+// canary deleted the IGNORE_DIRS check outright and the whole suite stayed green, because no
+// test had ever indexed a tree that HAD a node_modules in it.
+//
+// Note which entries actually prove the rule. `.git` is caught anyway by the dotfile
+// default-deny, so it proves nothing here. `node_modules` and `dist` have NO DOT: the ignore
+// list is the only thing standing between them and every search result an agent ever gets.
+//
+// Without it lens indexes a few thousand vendor files, every query comes back full of library
+// internals, and the token budget — the entire point of the tool — is spent on somebody else's
+// code.
+test('a repo with node_modules and build output: lens indexes YOUR code and not the vendors', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'lens-vendors-'));
+  mkdirSync(join(repo, 'src'), { recursive: true });
+  mkdirSync(join(repo, 'node_modules', 'left-pad'), { recursive: true });
+  mkdirSync(join(repo, 'dist'), { recursive: true });
+  mkdirSync(join(repo, '.git'), { recursive: true });
+
+  writeFileSync(join(repo, 'src', 'app.js'), 'export const ZZMINE = () => "the code I wrote";\n');
+  writeFileSync(join(repo, 'node_modules', 'left-pad', 'index.js'), 'module.exports = function ZZVENDOR() {};\n');
+  writeFileSync(join(repo, 'dist', 'bundle.js'), 'var ZZVENDOR=function(){};\n');
+  writeFileSync(join(repo, '.git', 'COMMIT_EDITMSG'), 'ZZVENDOR wip\n');
+
+  process.env.LENS_DB = join(work, 'vendors.db');
+  lens.indexPath(repo);
+
+  const { results: mine } = lens.search('ZZMINE', { max_tokens: 2000 });
+  assert.ok(mine.some((h) => h.path.endsWith('app.js')), 'your own source is indexed');
+
+  const { results: theirs } = lens.search('ZZVENDOR', { max_tokens: 2000 });
+  assert.deepEqual(theirs.map((h) => h.path), [],
+    'node_modules, dist and .git are not your code and must never reach a search result');
+
+  // NB: the tests share one index, so a bare stats().files count measures the wrong
+  // population (my first cut asserted 1 and got 8 — other tests' trees). Assert the property
+  // itself: NOTHING from a vendor directory may be in the index, under any path.
+  const indexed = lens.map().tree.map((f) => f.path);
+  const vendored = indexed.filter((p) => /(^|\/)(node_modules|dist|build|\.git)(\/|$)/.test(p));
+  assert.deepEqual(vendored, [], 'not one vendor or build-output file is in the index');
+  assert.ok(indexed.some((p) => p.endsWith('app.js')), 'and your own file is');
+  rmSync(repo, { recursive: true, force: true });
+});
