@@ -560,3 +560,27 @@ test('a repo with node_modules and build output: lens indexes YOUR code and not 
   assert.ok(indexed.some((p) => p.endsWith('app.js')), 'and your own file is');
   rmSync(repo, { recursive: true, force: true });
 });
+
+// POINTING LENS DIRECTLY AT A CREDENTIAL FILE MUST BE REFUSED, NOT INDEXED.
+//
+// The .env leak (the big one) was about the WALK yielding a dotfile it met. This is the other door:
+// `lens index .env` — a target that IS a single credential file, named on purpose. The walk-skip
+// never runs (there is no directory to walk), so a separate guard has to catch it, and that guard
+// was uncovered. If it broke, the one command that most obviously should refuse would hand the keys
+// straight back.
+test('indexing a single credential file by name is refused, not indexed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lens-directfile-'));
+  writeFileSync(join(dir, '.env'), 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIexampleKEY\n');
+  writeFileSync(join(dir, 'server.pem'), '-----BEGIN PRIVATE KEY-----\nMIIEv\n');
+  writeFileSync(join(dir, 'app.js'), 'export const ok = 1;\n');
+  process.env.LENS_DB = join(work, 'directfile.db');
+
+  for (const secret of ['.env', 'server.pem']) {
+    assert.throws(() => lens.indexPath(join(dir, secret)), /refusing to index|credentials/i,
+      `lens index ${secret} must refuse — it is a credentials file, however you point at it`);
+  }
+  // …and an ordinary source file named directly still indexes fine
+  const r = lens.indexPath(join(dir, 'app.js'));
+  assert.ok(r.files >= 1 || lens.map().tree.some((f) => f.path.endsWith('app.js')), 'a real source file indexes');
+  rmSync(dir, { recursive: true, force: true });
+});

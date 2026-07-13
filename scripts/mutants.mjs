@@ -50,6 +50,12 @@ const CANARIES = [
     find: '  if (IGNORE_DIRS.has(name)) return true;',
     into: '  if (IGNORE_DIRS.has(name)) return false;',
   },
+  {
+    why: 'pointing lens DIRECTLY at a credential file (lens index .env) must be refused — the walk-skip never runs for a single file',
+    file: 'src/core.js',
+    find: '  if (!st.isDirectory() && isSecretPath(root.split(sep).pop())) {',
+    into: '  if (false && isSecretPath(root.split(sep).pop())) {',
+  },
 ];
 
 // spawnSync returns status:null when IT kills the child for exceeding the timeout — a TIMEOUT,
