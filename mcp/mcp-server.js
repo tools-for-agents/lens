@@ -3,7 +3,7 @@
 // search returns just-enough ranked snippets, outline maps a file without reading
 // it whole, read pulls exact line ranges. Runs locally with filesystem access.
 import { createInterface } from 'node:readline';
-import { indexPath, search, references, outline, readLines, map, stats } from '../src/core.js';
+import { indexPath, search, references, outline, readLines, map, stats, freshness } from '../src/core.js';
 
 const PROTOCOL = '2024-11-05';
 
@@ -58,6 +58,14 @@ const tools = [
     run: (a) => map({ limit: a.limit }),
   },
   {
+    name: 'lens_freshness',
+    description: 'Is the index STALE? Compares the code on disk now against what was indexed, and reports which files changed, were added, or were removed since. Check this before you trust a lens_search on a repo you indexed earlier — a search answers from the index, so if the code moved on you get yesterday\'s answer with no warning. If stale is non-zero, run lens_index again.',
+    inputSchema: { type: 'object', properties: {
+      path: { type: 'string', description: 'The directory (or file) to check against the index (default ".")' },
+    } },
+    run: (a) => freshness(a.path || '.'),
+  },
+  {
     name: 'lens_stats',
     description: 'Index statistics: file/chunk/line counts and languages.',
     inputSchema: { type: 'object', properties: {} },
@@ -82,6 +90,7 @@ const ANNOTATIONS = {
   lens_outline: {"readOnlyHint": true, "openWorldHint": false},
   lens_read: {"readOnlyHint": true, "openWorldHint": false},
   lens_map: {"readOnlyHint": true, "openWorldHint": false},
+  lens_freshness: {"readOnlyHint": true, "openWorldHint": false},
   lens_stats: {"readOnlyHint": true, "openWorldHint": false},
   lens_index: {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
 };
