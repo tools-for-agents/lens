@@ -2,7 +2,7 @@
 // pull *just enough* context instead of reading whole files. Token-budgeted.
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { join, extname, relative, resolve, sep } from 'node:path';
-import { writeDb, get, all, run, DB_PATH, storeExists } from './db.js';
+import { writeDb, get, all, run, DB_PATH, storeExists, atomically } from './db.js';
 
 const IGNORE_DIRS = new Set(['.git', 'node_modules', '.lens', 'dist', 'build', 'out',
   '.next', 'coverage', 'vendor', 'target', '.venv', 'venv', '__pycache__', 'data', '.cache']);
@@ -162,21 +162,26 @@ export function indexPath(target, { reindex = false } = {}) {
       generated.push(rel); skipped++; continue;
     }
 
-    run(`DELETE FROM chunks WHERE path=?`, rel);
-    for (let i = 0; i < lines.length; i += (CHUNK_LINES - OVERLAP)) {
-      const slice = lines.slice(i, i + CHUNK_LINES);
-      if (!slice.join('').trim()) continue;
-      const body = slice.join('\n');
-      run(`INSERT INTO chunks (path, body, lang, start, "end") VALUES (?,?,?,?,?)`,
-        rel, body, lang, i + 1, Math.min(i + CHUNK_LINES, lines.length));
-      chunks++;
-      if (i + CHUNK_LINES >= lines.length) break;
-    }
-    run(`INSERT INTO files (path,lang,lines,bytes,mtime,indexed_at)
-         VALUES (?,?,?,?,?,?)
-         ON CONFLICT(path) DO UPDATE SET lang=excluded.lang, lines=excluded.lines,
-           bytes=excluded.bytes, mtime=excluded.mtime, indexed_at=excluded.indexed_at`,
-      rel, lang, lines.length, s.size, Math.floor(s.mtimeMs), new Date().toISOString());
+    // DELETE-then-INSERT, as ONE transaction. Apart, a search landing between them sees this file
+    // with ZERO chunks and answers "your code does not contain that" — for code that is right there.
+    // A reader sees the OLD chunks or the NEW ones, never neither. (See `atomically` in db.js.)
+    atomically(() => {
+      run(`DELETE FROM chunks WHERE path=?`, rel);
+      for (let i = 0; i < lines.length; i += (CHUNK_LINES - OVERLAP)) {
+        const slice = lines.slice(i, i + CHUNK_LINES);
+        if (!slice.join('').trim()) continue;
+        const body = slice.join('\n');
+        run(`INSERT INTO chunks (path, body, lang, start, "end") VALUES (?,?,?,?,?)`,
+          rel, body, lang, i + 1, Math.min(i + CHUNK_LINES, lines.length));
+        chunks++;
+        if (i + CHUNK_LINES >= lines.length) break;
+      }
+      run(`INSERT INTO files (path,lang,lines,bytes,mtime,indexed_at)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT(path) DO UPDATE SET lang=excluded.lang, lines=excluded.lines,
+             bytes=excluded.bytes, mtime=excluded.mtime, indexed_at=excluded.indexed_at`,
+        rel, lang, lines.length, s.size, Math.floor(s.mtimeMs), new Date().toISOString());
+    });
     indexed++;
   }
 

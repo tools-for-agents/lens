@@ -671,3 +671,51 @@ test('lens_read bounds BYTES, not just lines — a line-window is not a byte-win
   assert.equal(normal.truncated, undefined, 'a normal read is not truncated');
   assert.ok(!/truncated at/.test(normal.body), 'and carries no truncation notice');
 });
+
+test('a REINDEX must not make a file VANISH while it is being reindexed', async () => {
+  // Re-indexing a file is DELETE-then-INSERT. As two separate autocommit statements they are two
+  // transactions, and a search landing between them sees that file with ZERO chunks — so lens_search
+  // answers "your code does not contain that" for code that is right there, and the agent believes it.
+  // Measured before the fix: 31,368 searches during a concurrent reindex, and the fewest files ever
+  // visible was 39 of 40 — one file silently invisible at a time, for as long as the reindex ran.
+  //
+  // This needs REAL PROCESSES: one connection cannot observe its own mid-transaction state.
+  const { execFile } = await import('node:child_process');
+  const { mkdtempSync, rmSync, writeFileSync, mkdirSync: mkd } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join: pjoin } = await import('node:path');
+
+  const dir = mkdtempSync(pjoin(tmpdir(), 'lens-race-'));
+  const tree = pjoin(dir, 'src');
+  mkd(tree, { recursive: true });
+  const N = 20;
+  for (let i = 0; i < N; i++) writeFileSync(pjoin(tree, `f${i}.js`), `export function zzrace${i}() { return 'zzracetoken'; }\n`);
+
+  const core = new URL('../src/core.js', import.meta.url).href;
+  const db = pjoin(dir, 'index.db');
+  const env = { ...process.env, LENS_DB: db };
+
+  const idx = pjoin(dir, 'idx.mjs');
+  writeFileSync(idx, `
+    const m = await import(${JSON.stringify(core)});
+    for (let i = 0; i < 6; i++) m.indexPath(${JSON.stringify(tree)}, { reindex: true });
+  `);
+  const seek = pjoin(dir, 'seek.mjs');
+  writeFileSync(seek, `
+    const m = await import(${JSON.stringify(core)});
+    let min = 1e9;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 2500) { const r = m.search('zzracetoken', { k: 50 }); if (r.matched < min) min = r.matched; }
+    console.log(min);
+  `);
+
+  const run = (script) => new Promise((res, rej) =>
+    execFile(process.execPath, [script], { env, encoding: 'utf8' }, (e, out) => (e ? rej(e) : res(out))));
+
+  try {
+    await run(idx);                                   // seed the index
+    const [, seen] = await Promise.all([run(idx), run(seek)]);   // reindex WHILE searching
+    assert.equal(+seen.trim(), N,
+      `every search during a reindex must see all ${N} files — the fewest seen was ${seen.trim()}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

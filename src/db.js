@@ -95,3 +95,28 @@ export const get = (sql, ...a) => { const d = open(false); return d ? d.prepare(
 export const all = (sql, ...a) => { const d = open(false); return d ? d.prepare(sql).all(...a) : []; };
 export const run = (sql, ...a) => open(true).prepare(sql).run(...a);
 export { DB_PATH };
+
+// ── A REINDEX MUST NOT MAKE A FILE VANISH WHILE IT IS BEING REINDEXED ──────────
+//
+// Re-indexing a file is DELETE-then-INSERT. As two separate autocommit statements those are two
+// transactions, and a search landing between them sees the file with ZERO chunks — so `lens_search`
+// answers "not found" for code that is right there, and an agent believes it. Measured: 31,368
+// searches during a concurrent reindex, and the fewest files ever visible was 39 of 40 — one file
+// invisible at a time, silently, for as long as the reindex runs.
+//
+// A transient wrong answer is still a wrong answer, and this is the one lens must never give.
+// WAL readers see a consistent SNAPSHOT, so wrapping the pair makes the swap atomic to them: they see
+// the OLD chunks or the NEW ones, never neither. Reentrant so a caller may already hold the lock.
+let _txDepth = 0;
+export function atomically(fn) {
+  const d = writeDb();
+  if (_txDepth++ === 0) d.exec('BEGIN IMMEDIATE;');
+  try {
+    const r = fn();
+    if (--_txDepth === 0) d.exec('COMMIT;');
+    return r;
+  } catch (e) {
+    if (--_txDepth === 0) { try { d.exec('ROLLBACK;'); } catch { /* nothing to roll back */ } }
+    throw e;
+  }
+}

@@ -74,6 +74,12 @@ const CANARIES = [
     find: 'const READ_MAX_TOKENS = 4000;   // ~16KB: generous for 60 lines of real code, fatal to nothing real',
     into: 'const READ_MAX_TOKENS = Infinity;',
   },
+  {
+    why: 'a REINDEX must not make a file VANISH — split apart, DELETE-then-INSERT lets a search see ZERO chunks and answer "your code does not contain that"',
+    file: 'src/db.js',
+    find: '  if (_txDepth++ === 0) d.exec(\'BEGIN IMMEDIATE;\');',
+    into: '  if (false) d.exec(\'BEGIN IMMEDIATE;\');',
+  },
 ];
 
 // spawnSync returns status:null when IT kills the child for exceeding the timeout — a TIMEOUT,
