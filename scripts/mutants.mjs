@@ -68,6 +68,12 @@ const CANARIES = [
     find: 'const MINIFIED_AVG_LINE = 2000;',
     into: 'const MINIFIED_AVG_LINE = Infinity;',
   },
+  {
+    why: 'a line-window is not a byte-window — ONE line of a minified file is 350,000 tokens, and lens_read handed it over',
+    file: 'src/core.js',
+    find: 'const READ_MAX_TOKENS = 4000;   // ~16KB: generous for 60 lines of real code, fatal to nothing real',
+    into: 'const READ_MAX_TOKENS = Infinity;',
+  },
 ];
 
 // spawnSync returns status:null when IT kills the child for exceeding the timeout — a TIMEOUT,

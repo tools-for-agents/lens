@@ -649,3 +649,25 @@ test('the token budget is a CEILING — its "always return one" hatch must not l
   assert.ok(hit.chunk_tokens > 100_000, 'reporting the real size of the chunk it came from');
   assert.ok(hit.body.length <= 1800 * 4, 'the body actually fits the budget');
 });
+
+test('lens_read bounds BYTES, not just lines — a line-window is not a byte-window', () => {
+  // readLines bounds how many LINES it returns (60 by default), which silently assumes a line is
+  // small. In generated output it is not: lens_read('bundle.min.js', 1, 1) — the SMALLEST possible
+  // read, ONE line — returned 350,000 TOKENS with no truncated flag. And the index-time skip does
+  // not protect this path: readLines reads from DISK BY PATH, so an agent that got the path any
+  // other way (ls, a stack trace, a grep) walks straight in. Two doors, one guard.
+  const gen = join(work, 'gen');
+  const r = lens.readLines(join(gen, 'bundle.min.js'), 1, 1);
+  assert.ok(r.tokens <= 4100, `one line of a minified file must still be bounded — got ${r.tokens}`);
+  assert.equal(r.truncated, true, 'and it SAYS it was cut — never a silent truncation');
+  assert.ok(r.full_tokens > 50_000, 'reporting how big that line really is');
+  assert.match(r.body, /raise max_tokens/, 'and what to do about it');
+
+  // A ceiling, not a wall.
+  assert.ok(lens.readLines(join(gen, 'bundle.min.js'), 1, 1, { max_tokens: 20_000 }).tokens > 15_000,
+    'max_tokens raises the ceiling');
+  // A normal read is completely unaffected.
+  const normal = lens.readLines(join(src, 'auth.js'), 1, 4);
+  assert.equal(normal.truncated, undefined, 'a normal read is not truncated');
+  assert.ok(!/truncated at/.test(normal.body), 'and carries no truncation notice');
+});

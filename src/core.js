@@ -431,7 +431,16 @@ export function outline(path) {
 }
 
 // ── Surgical read ─────────────────────────────────────────────────────────────
-export function readLines(path, start = 1, end) {
+// 🔑 A LINE-WINDOW IS NOT A BYTE-WINDOW. readLines bounds how many LINES it returns (60 by default),
+// which silently assumes a line is small. In generated output it is not: `lens_read('bundle.min.js',
+// 1, 1)` — the SMALLEST possible read, a single line — returned 350,000 TOKENS, with no truncated
+// flag. And the index-time skip does not protect this path: readLines reads from DISK BY PATH, so an
+// agent that got the path any other way (ls, a stack trace, a grep) walks straight in. Two doors,
+// one guard. Bound the bytes too, and SAY when it was cut.
+const READ_MAX_TOKENS = 4000;   // ~16KB: generous for 60 lines of real code, fatal to nothing real
+
+export function readLines(path, start = 1, end, { max_tokens = READ_MAX_TOKENS } = {}) {
+  max_tokens = Number.isFinite(+max_tokens) && +max_tokens > 0 ? Math.floor(+max_tokens) : READ_MAX_TOKENS;
   // bad start/end (NaN from a non-numeric query param) would make Math.max(1,NaN)
   // NaN → NaN line numbers and a broken slice; coerce to sane integers first.
   start = Number.isFinite(+start) && +start >= 1 ? Math.floor(+start) : 1;
@@ -452,8 +461,16 @@ export function readLines(path, start = 1, end) {
   const s = Math.max(1, start);
   let e = Math.min(lines.length, end || start + 60);
   if (e < s) e = Math.min(lines.length, s + 60);   // an end before start → a default window from start, not an empty read
-  const body = lines.slice(s - 1, e).map((l, i) => `${s + i}\t${l}`).join('\n');
-  return { path, start: s, end: e, total_lines: lines.length, tokens: estTokens(body), body };
+  const full = lines.slice(s - 1, e).map((l, i) => `${s + i}\t${l}`).join('\n');
+  const over = estTokens(full) > max_tokens;
+  // Never a silent cut. A read that was truncated and does not say so is a read the caller believes
+  // is the whole thing — and it will reason about the code it cannot see as though it were not there.
+  const body = over
+    ? full.slice(0, max_tokens * 4) + `\n\n…[truncated at ${max_tokens} tokens — raise max_tokens, or narrow the line range]`
+    : full;
+  const out = { path, start: s, end: e, total_lines: lines.length, tokens: estTokens(body), body };
+  if (over) { out.truncated = true; out.full_tokens = estTokens(full); }
+  return out;
 }
 
 // ── Repo map + stats ──────────────────────────────────────────────────────────

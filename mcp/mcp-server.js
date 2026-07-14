@@ -48,8 +48,9 @@ const tools = [
     description: 'Read an exact line range of a file (surgical). Pair with lens_search / lens_outline to pull only the lines you need.',
     inputSchema: { type: 'object', properties: {
       path: { type: 'string' }, start: { type: 'integer' }, end: { type: 'integer' },
+      max_tokens: { type: 'integer', description: 'token ceiling for the returned body (default 4000). A line-window is not a byte-window: one line of a minified file can be 350k tokens.' },
     }, required: ['path'] },
-    run: (a) => readLines(a.path, a.start || 1, a.end),
+    run: (a) => readLines(a.path, a.start || 1, a.end, a),
   },
   {
     name: 'lens_map',
