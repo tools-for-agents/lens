@@ -56,6 +56,18 @@ const CANARIES = [
     find: '  if (!st.isDirectory() && isSecretPath(root.split(sep).pop())) {',
     into: '  if (false && isSecretPath(root.split(sep).pop())) {',
   },
+  {
+    why: 'the budget is a CEILING — its "always return one" hatch let a 350,003-token chunk through a 1,800-token budget',
+    file: 'src/core.js',
+    find: '    const cut = Math.max(0, max_tokens - tokens) * 4;',
+    into: '    const cut = Infinity;',
+  },
+  {
+    why: 'a minified bundle is ONE line, so it chunks to ONE blob that IS the whole file — lens exists to avoid exactly that',
+    file: 'src/core.js',
+    find: 'const MINIFIED_AVG_LINE = 2000;',
+    into: 'const MINIFIED_AVG_LINE = Infinity;',
+  },
 ];
 
 // spawnSync returns status:null when IT kills the child for exceeding the timeout — a TIMEOUT,

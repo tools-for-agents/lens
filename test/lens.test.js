@@ -605,3 +605,47 @@ test('indexing a single credential file by name is refused, not indexed', () => 
   assert.ok(r.files >= 1 || lens.map().tree.some((f) => f.path.endsWith('app.js')), 'a real source file indexes');
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('a minified bundle is NOT indexed — a line is not a meaningful unit in it', async () => {
+  // lens CHUNKS BY LINES. A minified bundle is ONE line, so the chunker yields ONE chunk that IS
+  // THE WHOLE FILE — precisely what lens exists to keep out of a context window. Worse, it tied on
+  // bm25 with the real code and won the tiebreak by luck, so a search returned useful code or a
+  // blob of minified junk at random.
+  const { indexPath, search } = await import('../src/core.js');
+  const big = join(work, 'gen');
+  mkdirSync(big, { recursive: true });
+  const parts = [];
+  while (parts.join(';').length < 300_000) parts.push(`function f${parts.length}(x){return zzminneedle*x}`);
+  writeFileSync(join(big, 'bundle.min.js'), parts.join(';'));                 // ONE line, 300KB
+  writeFileSync(join(big, 'real.js'), 'export function useIt() {\n  return zzminneedle;\n}\n');
+
+  const res = indexPath(big, { reindex: true });
+  assert.equal(res.generated.length, 1, 'reported, never silent — exactly one file was declined');
+  assert.match(res.generated[0], /bundle\.min\.js$/, 'and it is the bundle, not the real file');
+
+  const hits = search('zzminneedle', { k: 5 });
+  assert.ok(hits.results.some((r) => /real\.js$/.test(r.path)), 'the REAL code is still found');
+  assert.ok(!hits.results.some((r) => /bundle\.min\.js$/.test(r.path)), 'the bundle is not in the index');
+});
+
+test('the token budget is a CEILING — its "always return one" hatch must not let 350k tokens through', async () => {
+  // `results.length > 0` is the budget's one escape hatch: never come back empty just because the
+  // top hit is a little over. Right for a ~200-token chunk; catastrophic when the top hit is a
+  // 350,003-token chunk. A 1,800-token budget returned 350,003 tokens — 194× over — and lens exists
+  // to keep whole files OUT of the context window. The hatch must return SOMETHING, not EVERYTHING.
+  const { search } = await import('../src/core.js');
+  const { run: dbRun } = await import('../src/db.js');
+  // Plant an oversized chunk directly: the indexer now declines minified FILES, but a chunk can be
+  // large for other reasons, and the budget must hold regardless of how it got there.
+  const huge = 'zzbudgetneedle '.repeat(30_000);   // ~450KB ≈ 112k tokens, in ONE chunk
+  dbRun(`INSERT INTO chunks (path, body, lang, start, "end") VALUES (?,?,?,?,?)`,
+    'gen/huge-chunk.txt', huge, 'text', 1, 1);
+
+  const res = search('zzbudgetneedle', { k: 5, max_tokens: 1800 });
+  assert.ok(res.tokens <= 1800, `the budget is a ceiling — got ${res.tokens} tokens`);
+  const hit = res.results.find((r) => /huge-chunk/.test(r.path));
+  assert.ok(hit, 'the hit is still RETURNED — bounding it must not drop it');
+  assert.equal(hit.truncated, true, 'and it SAYS it was cut — a chunk cut in half must never claim to be whole');
+  assert.ok(hit.chunk_tokens > 100_000, 'reporting the real size of the chunk it came from');
+  assert.ok(hit.body.length <= 1800 * 4, 'the body actually fits the budget');
+});

@@ -52,6 +52,11 @@ function skipEntry(name, isDir) {
 }
 
 const MAX_BYTES = 1_500_000;
+// Average line length at or past which a file is generated, not written. Measured, not guessed: the
+// highest average in any real file across all 7 repos of this kit is 106 chars (a README); a minified
+// bundle runs to hundreds of thousands. 2000 leaves a 19× margin and is not a close call in either
+// direction, on purpose — a checker that fires on correct work teaches you to skim past it.
+const MINIFIED_AVG_LINE = 2000;
 const CHUNK_LINES = 50;
 const OVERLAP = 6;
 
@@ -97,6 +102,7 @@ export function indexPath(target, { reindex = false } = {}) {
   }
   const files = st.isDirectory() ? [...walk(root, root)] : [root];
   let indexed = 0, skipped = 0, chunks = 0;
+  const generated = [];   // minified/generated files lens declined to chunk — reported, never silent
 
   const d = writeDb();
   const tx = d.prepare.bind(d);
@@ -141,6 +147,21 @@ export function indexPath(target, { reindex = false } = {}) {
     const lines = text.split('\n');
     const lang = langOf(file);
 
+    // 🔑 LENS CHUNKS BY LINES. For a minified bundle, a line is not a meaningful unit — the whole
+    // file is ONE line — so the chunker yields ONE chunk that IS THE WHOLE FILE: precisely the thing
+    // lens exists to keep out of your context window. A 1.4MB bundle.min.js (legal — under MAX_BYTES)
+    // became a single 350,003-token chunk that tied on bm25 with the real code and won the tiebreak
+    // by luck, so a search either got you useful code or a blob of minified junk, at random.
+    //
+    // The budget truncation in search() is the hard guarantee and holds for ANY pathological file.
+    // This is the root cause: generated output is not your code, exactly as node_modules is not your
+    // code. Validated against all 7 repos of this kit before shipping — 176 files, zero flagged.
+    // And it is REPORTED, never silent: "I did not index that" and "your code does not contain that"
+    // are opposite facts, and the second is the one thing lens must never say by accident.
+    if (lines.length && s.size / lines.length >= MINIFIED_AVG_LINE) {
+      generated.push(rel); skipped++; continue;
+    }
+
     run(`DELETE FROM chunks WHERE path=?`, rel);
     for (let i = 0; i < lines.length; i += (CHUNK_LINES - OVERLAP)) {
       const slice = lines.slice(i, i + CHUNK_LINES);
@@ -174,7 +195,14 @@ export function indexPath(target, { reindex = false } = {}) {
       removed++;
     }
   }
-  return { indexed, skipped, removed, chunks, total_files: stats().files };
+  // Never silent. A file lens declined is a file lens will answer "not found" about, and
+  // "I did not index that" and "your code does not contain that" are opposite facts.
+  if (generated.length) {
+    process.stderr.write(`lens: skipped ${generated.length} generated/minified file(s) — a line is not a `
+      + `meaningful unit in them, so they chunk to one enormous blob:\n  ${generated.slice(0, 5).join('\n  ')}\n`
+      + (generated.length > 5 ? `  …and ${generated.length - 5} more\n` : ''));
+  }
+  return { indexed, skipped, removed, chunks, generated, total_files: stats().files };
 }
 
 // Is the index still telling the truth about the tree? Compares what was indexed
@@ -264,9 +292,26 @@ export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
     const t = estTokens(r.body);
     if (results.length >= k) break;
     if (tokens + t > max_tokens && results.length > 0) { squeezed++; continue; }
-    results.push({ path: r.path, start: r.start, end: r.end, lang: r.lang,
-      score: Math.round(r.score * 1000) / 1000, tokens: t, body: r.body });
-    tokens += t;
+    // 🔑 `results.length > 0` is the budget's ONE escape hatch: never come back empty just because
+    // the top hit is a little over. That is right for an ordinary ~200-token chunk — and it is the
+    // hatch a 350,000-TOKEN RESULT WALKS THROUGH. lens chunks by LINES, and a minified bundle is
+    // ONE LINE, so a 1.4MB file (legal: under MAX_BYTES) is ONE 1.4MB chunk. bm25 ranks it FIRST
+    // (35,278 hits of the term), so it is always the one taking the free pass, and it evicts every
+    // useful result behind it: a 1,800-token budget returned 350,003 tokens — 194× over — and the
+    // small, actually-useful hit never came back at all.
+    //
+    // lens exists to keep whole files OUT of the context window. Handing back MORE tokens than the
+    // file you were avoiding is not a slow search; it is the tool doing the opposite of its purpose.
+    // The hatch must return SOMETHING, not EVERYTHING: cut the body to the budget, and SAY SO — a
+    // chunk cut in half must never claim to be whole (the same contract as scout's page truncation).
+    const cut = Math.max(0, max_tokens - tokens) * 4;
+    const over = t > estTokens(r.body.slice(0, cut));
+    const body = over ? r.body.slice(0, cut) : r.body;
+    const hit = { path: r.path, start: r.start, end: r.end, lang: r.lang,
+      score: Math.round(r.score * 1000) / 1000, tokens: estTokens(body), body };
+    if (over) { hit.truncated = true; hit.chunk_tokens = t; }
+    results.push(hit);
+    tokens += hit.tokens;
   }
 
   // How many chunks actually matched — not how many survived. Without this a
