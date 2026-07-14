@@ -695,17 +695,25 @@ test('a REINDEX must not make a file VANISH while it is being reindexed', async 
   const db = pjoin(dir, 'index.db');
   const env = { ...process.env, LENS_DB: db };
 
+  // 🔑 THE SEARCHER MUST RUN FOR EXACTLY AS LONG AS THE REINDEXER — NOT FOR A FIXED TIME.
+  // A fixed window only HOPES to overlap the writes: scout's twin of this test caught the race here
+  // and MISSED it in CI, so its canary SURVIVED there. A race test that only sometimes reproduces the
+  // race only sometimes guards, and a flaky canary teaches you to ignore the gate. The writer drops a
+  // sentinel when it is done and the searcher polls until it appears — full overlap, on any hardware.
+  const done = pjoin(dir, 'DONE');
   const idx = pjoin(dir, 'idx.mjs');
   writeFileSync(idx, `
+    import fs from 'node:fs';
     const m = await import(${JSON.stringify(core)});
     for (let i = 0; i < 6; i++) m.indexPath(${JSON.stringify(tree)}, { reindex: true });
+    fs.writeFileSync(${JSON.stringify(done)}, 'x');
   `);
   const seek = pjoin(dir, 'seek.mjs');
   writeFileSync(seek, `
+    import fs from 'node:fs';
     const m = await import(${JSON.stringify(core)});
     let min = 1e9;
-    const t0 = Date.now();
-    while (Date.now() - t0 < 2500) { const r = m.search('zzracetoken', { k: 50 }); if (r.matched < min) min = r.matched; }
+    while (!fs.existsSync(${JSON.stringify(done)})) { const r = m.search('zzracetoken', { k: 50 }); if (r.matched < min) min = r.matched; }
     console.log(min);
   `);
 
@@ -714,6 +722,7 @@ test('a REINDEX must not make a file VANISH while it is being reindexed', async 
 
   try {
     await run(idx);                                   // seed the index
+    rmSync(done, { force: true });                    // …and clear the sentinel the seed run dropped
     const [, seen] = await Promise.all([run(idx), run(seek)]);   // reindex WHILE searching
     assert.equal(+seen.trim(), N,
       `every search during a reindex must see all ${N} files — the fewest seen was ${seen.trim()}`);
