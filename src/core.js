@@ -35,7 +35,7 @@ const SECRET_FILES = new Set([
   'id_ecdsa', 'id_ed25519', 'secrets.json', 'secrets.yaml', 'secrets.yml',
   'credentials.json', 'service-account.json', 'serviceaccount.json',
 ]);
-const SECRET_RE = /^\.env(\..*)?$|^\.?secrets?[-_.]|\.(pem|key|p12|pfx|keystore|jks|ppk)$|(^|[-_.])credentials?([-_.]|$)/i;
+const SECRET_RE = /^\.env(\..*)?$|^\.?secrets?[-_.]|\.(pem|key|p8|pk8|p12|pfx|keystore|jks|ppk)$|(^|[-_.])credentials?([-_.]|$)/i;
 
 export function isSecretPath(name) {
   const n = String(name);

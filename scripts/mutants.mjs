@@ -33,6 +33,12 @@ const CANARIES = [
     into: '  if (false) return true;',
   },
   {
+    why: 'a .p8 is an Apple App Store Connect / APNs PRIVATE KEY — .pem/.key were covered, .p8 was the gap, and lens indexed + served it',
+    file: 'src/core.js',
+    find: '\\.(pem|key|p8|pk8|p12|pfx|keystore|jks|ppk)$',
+    into: '\\.(pem|key|p12|pfx|keystore|jks|ppk)$',
+  },
+  {
     why: 'a dotfile is default-deny — the next secret filename has not been invented yet',
     file: 'src/core.js',
     find: "  if (name.startsWith('.') && !DOT_ALLOW.has(name)) return true;",

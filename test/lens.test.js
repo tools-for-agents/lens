@@ -442,6 +442,9 @@ test('a repo with secrets in it: lens indexes the code and NOT the credentials',
   writeFileSync(join(repo, '.npmrc'), '//registry.npmjs.org/:_authToken=npm_sekrit\n');
   writeFileSync(join(repo, 'server.pem'), '-----BEGIN PRIVATE KEY-----\nMIIEv\n');
   writeFileSync(join(repo, 'credentials.json'), '{"private_key":"-----BEGIN PRIVATE KEY-----"}\n');
+  // A .p8 is an Apple App Store Connect / APNs private key (PKCS#8) — unencrypted, and as common
+  // in a mobile repo as .env is in a web one. .pem/.key were covered; .p8 was the gap.
+  writeFileSync(join(repo, 'AuthKey_ABC123.p8'), '-----BEGIN PRIVATE KEY-----\nMIGTapplep8key\n');
 
   const db = join(work, 'secrets.db');
   process.env.LENS_DB = db;
@@ -450,7 +453,7 @@ test('a repo with secrets in it: lens indexes the code and NOT the credentials',
   // Nothing that looks like a credential may be in the index, under any query.
   for (const q of ['SECRET', 'sk_live', 'authToken', 'PRIVATE KEY', 'AWS']) {
     const { results } = lens.search(q, { max_tokens: 2000 });
-    const leaked = results.filter((h) => /\.env|\.npmrc|\.pem|credentials/.test(h.path));
+    const leaked = results.filter((h) => /\.env|\.npmrc|\.pem|\.p8|credentials/.test(h.path));
     assert.deepEqual(leaked.map((h) => h.path), [], `searching "${q}" surfaced a credentials file`);
   }
 
@@ -462,6 +465,8 @@ test('a repo with secrets in it: lens indexes the code and NOT the credentials',
   // tool, and "the model asked for it" is not consent from the person whose key it is.
   assert.throws(() => lens.readLines(join(repo, '.env')), /refusing to read/,
     'reading a credentials file by name is refused');
+  assert.throws(() => lens.readLines(join(repo, 'AuthKey_ABC123.p8')), /refusing to read/,
+    'reading a .p8 private key by name is refused too');
 
   rmSync(repo, { recursive: true, force: true });
 });
