@@ -493,13 +493,20 @@ export function readLines(path, start = 1, end, { max_tokens = READ_MAX_TOKENS }
 export function map({ limit = 400 } = {}) {
   // bad limit (NaN → SQLite `LIMIT ?` bind throws "datatype mismatch"; −1 → LIMIT −1 dumps every file) → default
   limit = Number.isFinite(+limit) && +limit > 0 ? Math.floor(+limit) : 400;
+  const total = get(`SELECT COUNT(*) n FROM files`)?.n ?? 0;
   const rows = all(`SELECT path, lang, lines, bytes FROM files ORDER BY path LIMIT ?`, limit);
   // token estimate per file (≈4 chars/token, same ratio as estTokens) — the web
   // tree sizes a weight bar by it so heavy-to-read files stand out
   for (const r of rows) r.tokens = Math.ceil((r.bytes || 0) / 4);
+  // by_lang counts EVERY indexed file, not just the page shown. Counting only the first `limit` rows made
+  // the language breakdown a wrong summary of the repo the moment the tree was capped — and it is cheap to
+  // get right with its own GROUP BY.
   const byLang = {};
-  for (const r of rows) byLang[r.lang] = (byLang[r.lang] || 0) + 1;
-  return { files: rows.length, by_lang: byLang, tree: rows };
+  for (const r of all(`SELECT lang, COUNT(*) n FROM files GROUP BY lang`)) byLang[r.lang] = r.n;
+  // `files` is the TRUE count; `shown` is how many rows are in the tree. Capping the tree is fine — but
+  // reporting the capped length AS the file count was a silent truncation: an agent sizing up a 5,000-file
+  // repo was handed "400" with nothing to say the other 4,600 existed. Say the total, and flag the cut.
+  return { files: total, shown: rows.length, truncated: total > rows.length, by_lang: byLang, tree: rows };
 }
 
 export function stats() {

@@ -765,3 +765,31 @@ test('a REINDEX must not make a file VANISH while it is being reindexed', async 
       `every search during a reindex must see all ${N} files — the fewest seen was ${seen.trim()}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// LAST: this rebuilds the shared index into a scratch tree (like the freshness/scoped tests above), so it
+// must run after every test that depends on the main fixture index.
+test('map reports the TRUE total and flags a truncated tree — not a silently capped count', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lens-map-'));
+  const prevCwd = process.cwd();
+  process.chdir(dir);
+  t.after(() => { process.chdir(prevCwd); try { rmSync(dir, { recursive: true, force: true }); } catch {} });
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  for (let i = 0; i < 5; i++) writeFileSync(join(dir, 'src', `f${i}.js`), `export const x${i} = ${i};\n`);
+  writeFileSync(join(dir, 'readme.md'), '# hi\n');
+  lens.indexPath('.');
+  const total = lens.stats().files;
+  assert.ok(total >= 6, 'six files indexed');
+  // Cap the tree below the total. Reporting the capped page length AS the file count is a silent
+  // truncation — a 5,000-file repo read as "400" with no sign the other 4,600 existed.
+  const capped = lens.map({ limit: 2 });
+  assert.equal(capped.tree.length, 2, 'the tree is capped to the limit');
+  assert.equal(capped.shown, 2, 'shown reports the capped page size');
+  assert.equal(capped.files, total, 'but files is the TRUE total, not the capped page length');
+  assert.equal(capped.truncated, true, 'and truncated says the tree was cut');
+  const langSum = Object.values(capped.by_lang).reduce((a, b) => a + b, 0);
+  assert.equal(langSum, total, 'by_lang totals EVERY indexed file, not just the shown page');
+  // over-fire guard: an un-capped map does not cry truncation
+  const full = lens.map();
+  assert.equal(full.truncated, false, 'a full map is not marked truncated');
+  assert.equal(full.shown, full.files, 'shown equals the total when nothing was cut');
+});

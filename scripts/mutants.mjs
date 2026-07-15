@@ -92,6 +92,12 @@ const CANARIES = [
     find: "    const under = !prefix || prefix === '' || path === prefix || path.startsWith(prefix + '/');",
     into: '    const under = true;',
   },
+  {
+    why: 'map reports the TRUE file count, not the capped page length — returning rows.length AS `files` is a silent truncation, so an agent sizing up a 5,000-file repo was handed "400" (the default limit) with nothing to say the other 4,600 existed',
+    file: 'src/core.js',
+    find: '  return { files: total, shown: rows.length, truncated: total > rows.length, by_lang: byLang, tree: rows };',
+    into: '  return { files: rows.length, shown: rows.length, truncated: total > rows.length, by_lang: byLang, tree: rows };',
+  },
 ];
 
 // spawnSync returns status:null when IT kills the child for exceeding the timeout — a TIMEOUT,
