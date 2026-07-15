@@ -86,6 +86,12 @@ const CANARIES = [
     find: '  if (_txDepth++ === 0) d.exec(\'BEGIN IMMEDIATE;\');',
     into: '  if (false) d.exec(\'BEGIN IMMEDIATE;\');',
   },
+  {
+    why: 'a freshness check aimed at a SUBDIR must not call files outside it "removed" — unscoped, freshness(\'src\') on a repo-wide index reports every non-src file as vanished, a false staleness telling the agent to reindex for nothing',
+    file: 'src/core.js',
+    find: "    const under = !prefix || prefix === '' || path === prefix || path.startsWith(prefix + '/');",
+    into: '    const under = true;',
+  },
 ];
 
 // spawnSync returns status:null when IT kills the child for exceeding the timeout — a TIMEOUT,

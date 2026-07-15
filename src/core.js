@@ -234,7 +234,18 @@ export function freshness(target = '.') {
     if (!indexed.has(path)) added.push(path);
     else if (indexed.get(path) !== mtime) changed.push(path);
   }
-  for (const path of indexed.keys()) if (!onDisk.has(path)) removed.push(path);
+  // `added`/`changed` come from onDisk, which is already only the files under `root` — but `removed`
+  // iterates the WHOLE index, so it must be scoped the same way, or a freshness check aimed at a
+  // subdirectory reports every file OUTSIDE it as "removed since you indexed": a false "N files vanished",
+  // naming files that are right there, and (per this tool's own advice) telling the agent to reindex for
+  // nothing. A file outside `target` is not removed — it is out of scope. This is the SAME prefix guard
+  // indexPath uses before it evicts (it must not delete files outside the path it was given); the read
+  // side has to agree with the write side.
+  const prefix = relative(process.cwd(), root);
+  for (const path of indexed.keys()) {
+    const under = !prefix || prefix === '' || path === prefix || path.startsWith(prefix + '/');
+    if (under && !onDisk.has(path)) removed.push(path);
+  }
 
   return {
     ok: true,

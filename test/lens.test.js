@@ -260,6 +260,38 @@ test('freshness sees the tree drift, and re-indexing forgets what is gone', asyn
   assert.ok(!map().tree.some((f) => f.path === 'src/doomed.js'), 'and gone from the file tree');
 });
 
+test('freshness scoped to a subdirectory does not report files OUTSIDE it as removed', async (t) => {
+  const { mkdtempSync, writeFileSync, rmSync, mkdirSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { freshness, indexPath } = await import('../src/core.js');
+
+  const dir = mkdtempSync(join(tmpdir(), 'lens-fresh-sub-'));
+  const prevCwd = process.cwd();
+  process.chdir(dir);                             // the index stores paths relative to cwd
+  t.after(() => { process.chdir(prevCwd); try { rmSync(dir, { recursive: true, force: true }); } catch {} });
+
+  mkdirSync(join(dir, 'sub'), { recursive: true });
+  writeFileSync(join(dir, 'root1.js'), 'export const a = 1;\n');
+  writeFileSync(join(dir, 'root2.js'), 'export const b = 2;\n');
+  writeFileSync(join(dir, 'sub', 'inner.js'), 'export const c = 3;\n');
+  indexPath('.');                                 // whole repo indexed
+
+  // lens_freshness({path:'sub'}) is an invited call — the schema says "the directory to check". A check
+  // aimed at sub/ must speak only about sub/: the root files are not "removed since you indexed", they are
+  // out of scope. Before the fix, freshness('sub') reported BOTH root files as removed (a false vanish,
+  // and per the tool's own advice, a reindex-for-nothing).
+  const fSub = freshness('sub');
+  assert.equal(fSub.counts.removed, 0, 'files outside the target are not reported as removed');
+  assert.equal(fSub.stale, 0, 'a scoped freshness check on an unchanged subtree is not stale');
+
+  // Under-fire guard: the scoping must not suppress a REAL deletion inside the target.
+  rmSync(join(dir, 'sub', 'inner.js'));
+  const fGone = freshness('sub');
+  assert.equal(fGone.counts.removed, 1, 'a genuine removal under the target IS still reported');
+  assert.ok(fGone.removed.includes('sub/inner.js'), 'and names the file that actually went away');
+});
+
 test('search can be scoped to a directory — the glob the UI now sends', async (t) => {
   const { createLensServer } = await import('../src/server.js');
   const { freshness, indexPath } = await import('../src/core.js');
