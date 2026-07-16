@@ -732,16 +732,32 @@ test('a REINDEX must not make a file VANISH while it is being reindexed', async 
   const db = pjoin(dir, 'index.db');
   const env = { ...process.env, LENS_DB: db };
 
-  // 🔑 THE SEARCHER MUST RUN FOR EXACTLY AS LONG AS THE REINDEXER — NOT FOR A FIXED TIME.
-  // A fixed window only HOPES to overlap the writes: scout's twin of this test caught the race here
-  // and MISSED it in CI, so its canary SURVIVED there. A race test that only sometimes reproduces the
-  // race only sometimes guards, and a flaky canary teaches you to ignore the gate. The writer drops a
-  // sentinel when it is done and the searcher polls until it appears — full overlap, on any hardware.
+  // 🔑 A RACE TEST MUST PROVE IT ACTUALLY RACED. A DONE sentinel alone synchronizes only the END of
+  // the race: nothing holds the reindex back until the searcher is up, so a searcher that loses the
+  // node-boot toss samples the TAIL. Measured in cortex's twin of this test, with the write lock
+  // deliberately removed: a searcher starting 28ms late got ONE search in — landing after the last
+  // write, seeing a consistent index, and PASSING. 3 runs in 10, and it survived in CI exactly that
+  // way while killing 24/24 locally. `min === N` from one sample is not evidence the invariant held,
+  // it is evidence that nothing was measured — and the assert cannot tell those two apart.
+  //
+  // So: the barrier is two-sided (the searcher warms up, signals READY, and only THEN does the
+  // reindex begin), and the sample count is asserted. A race that did not happen must be RED.
+  const ready = pjoin(dir, 'READY');
   const done = pjoin(dir, 'DONE');
+  const MIN_SAMPLES = 40;
   const idx = pjoin(dir, 'idx.mjs');
   writeFileSync(idx, `
     import fs from 'node:fs';
     const m = await import(${JSON.stringify(core)});
+    // the seeding run has no searcher to wait for; only the racing run passes 'barrier'
+    if (process.argv[2] === 'barrier') {
+      const nap = new Int32Array(new SharedArrayBuffer(4));
+      const t0 = Date.now();
+      while (!fs.existsSync(${JSON.stringify(ready)})) {
+        if (Date.now() - t0 > 30000) throw new Error('the searcher never signalled READY — no race happened');
+        Atomics.wait(nap, 0, 0, 2);
+      }
+    }
     for (let i = 0; i < 6; i++) m.indexPath(${JSON.stringify(tree)}, { reindex: true });
     fs.writeFileSync(${JSON.stringify(done)}, 'x');
   `);
@@ -749,20 +765,31 @@ test('a REINDEX must not make a file VANISH while it is being reindexed', async 
   writeFileSync(seek, `
     import fs from 'node:fs';
     const m = await import(${JSON.stringify(core)});
-    let min = 1e9;
-    while (!fs.existsSync(${JSON.stringify(done)})) { const r = m.search('zzracetoken', { k: 50 }); if (r.matched < min) min = r.matched; }
-    console.log(min);
+    m.search('zzracetoken', { k: 50 });                // warm up: the first search opens the db and prepares
+    fs.writeFileSync(${JSON.stringify(ready)}, 'x');   // ...only now may the reindex start
+    let min = 1e9, iters = 0;
+    while (!fs.existsSync(${JSON.stringify(done)})) {
+      const r = m.search('zzracetoken', { k: 50 });
+      if (r.matched < min) min = r.matched;
+      iters++;
+    }
+    console.log(JSON.stringify({ min, iters }));
   `);
 
-  const run = (script) => new Promise((res, rej) =>
-    execFile(process.execPath, [script], { env, encoding: 'utf8' }, (e, out) => (e ? rej(e) : res(out))));
+  const run = (script, ...argv) => new Promise((res, rej) =>
+    execFile(process.execPath, [script, ...argv], { env, encoding: 'utf8' }, (e, out) => (e ? rej(e) : res(out))));
 
   try {
     await run(idx);                                   // seed the index
     rmSync(done, { force: true });                    // …and clear the sentinel the seed run dropped
-    const [, seen] = await Promise.all([run(idx), run(seek)]);   // reindex WHILE searching
-    assert.equal(+seen.trim(), N,
-      `every search during a reindex must see all ${N} files — the fewest seen was ${seen.trim()}`);
+    const [, seen] = await Promise.all([run(idx, 'barrier'), run(seek)]);   // reindex WHILE searching
+    const { min, iters } = JSON.parse(seen.trim());
+    // the measurement is checked BEFORE the invariant — an unraced race proves nothing either way
+    assert.ok(iters >= MIN_SAMPLES,
+      `the searcher only got ${iters} searches in while the reindex ran — too few to have raced it. `
+      + 'A pass here would mean nothing was measured, not that the index held together.');
+    assert.equal(min, N,
+      `every one of the ${iters} searches during a reindex must see all ${N} files — the fewest seen was ${min}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
