@@ -97,6 +97,51 @@ jobs:
           tokens: kit      # the kit's ONE design system — iris/tokens.json, not a copy
           strict: true     # drift is a regression now; a gate is what keeps it from creeping back
 
+  # ...AND THE RESULTS VIEW — THE ONE STATE LENS EXISTS FOR — HAD NEVER BEEN LOOKED AT.
+  #
+  # The `look` job above seeds an index and asserts files>0 before looking, which is the whole
+  # lesson learned. Then it audits THE LANDING PAGE: the tree, the stats bar, an empty search
+  # box. Every hit card, the budget meter, the syntax highlighting — the entire reason lens is
+  # a program — was rendered by nothing. It is "a screenshot of an empty room" one level in:
+  # the room had furniture, and the gate was standing in the doorway.
+  #
+  # A gate must open the app, not just start it. So this one TYPES A QUERY and looks at what
+  # comes back — and asserts the search actually returned hits first, because an empty results
+  # view cannot collide, cannot clip, and cannot be unreadable either.
+  #
+  # The first look that ever had a search in it, on this exact page, found two defects that
+  # had been shipping: contrast 2.39:1 on the budget figure (an opacity over already-muted
+  # text — the one number that IS lens's job), and every hit card unreachable by keyboard
+  # (cursor:pointer, no tabindex, no role: mouse-only results). Both at desktop AND phone,
+  # dark AND light. Nothing else in this repo could have caught either.
+  look-results:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Serve it, THEN search it — and prove the search has something to show
+        run: |
+          node src/cli.js index .
+          node src/cli.js serve &
+          for i in $(seq 30); do curl -sf http://localhost:7900/api/stats >/dev/null && break; sleep 1; done
+          n=$(curl -sf "http://localhost:7900/api/search?q=function&k=8" | node -pe "JSON.parse(require('fs').readFileSync(0)).count ?? 0")
+          echo "the query the gate drives returns: count=$n"
+          test "$n" -gt 0 || { echo "::error::the seeded search returns 0 hits — iris would audit an EMPTY results view"; exit 1; }
+      - uses: tools-for-agents/iris@main
+        with:
+          url: http://localhost:7900/
+          viewports: phone,tablet,desktop
+          name: lens-results
+          tokens: kit      # the kit's ONE design system — iris/tokens.json, not a copy
+          strict: true     # drift is a regression now; a gate is what keeps it from creeping back
+          # Drive the app into the state, then REFUSE to audit an empty one: a --pre that throws
+          # makes iris report "the state was never reached and NOTHING was audited" instead of
+          # quietly grading the landing page again and calling it results.
+          pre: >-
+            const el=document.querySelector('#q');el.value='function';el.dispatchEvent(new Event('input',{bubbles:true}));await new Promise(r=>setTimeout(r,1500));const hits=document.querySelectorAll('#results .hit');if(!hits.length) throw new Error('drove a search and the page rendered NO hits — this would be an audit of an empty results view');
+
   # THE EMPTY STATE IS THE ONE STATE EVERY USER SEES FIRST — AND NOTHING WAS LOOKING AT IT.
   #
   # The `look` job above seeds data on purpose: a UI gate that has never seen a row of data

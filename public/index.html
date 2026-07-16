@@ -27,7 +27,7 @@
     --bg:#f5f7fa; --bg-2:#eaeef2; --panel:#ffffff; --panel-2:#eff3f7;
     --line:#d5dbe1; --line-2:#c0c9d2;
     --txt:#1f2328; --muted:#59616b; --dim:#5e6771;
-    --accent:#007b6c; --accent-dim:#7ecbc0; --amber:#8a5d00;
+    --accent:#00705f; --accent-dim:#7ecbc0; --amber:#8a5d00;   /* was #007b6c: 4.45:1 as text on the light panels — under AA */
     --sx-key:#a626a4; --sx-str:#3f9a4e; --sx-com:#9ca3af; --sx-num:#986801; --sx-fn:#3a6df0; --sx-punct:#383a42;
     --l-javascript:#c7a300; --l-typescript:#2f7fe0; --l-python:#2f86c4; --l-go:#0f9bb0; --l-rust:#c26a2a;
     --l-markdown:#6b7280; --l-json:#bd8a1e; --l-yaml:#9a5fc0; --l-css:#2f88d0; --l-html:#d26a30;
@@ -38,7 +38,7 @@
       --bg:#f5f7fa; --bg-2:#eaeef2; --panel:#ffffff; --panel-2:#eff3f7;
       --line:#d5dbe1; --line-2:#c0c9d2;
       --txt:#1f2328; --muted:#59616b; --dim:#5e6771;
-      --accent:#007b6c; --accent-dim:#7ecbc0; --amber:#8a5d00;
+      --accent:#00705f; --accent-dim:#7ecbc0; --amber:#8a5d00;   /* was #007b6c: 4.45:1 as text on the light panels — under AA */
       --sx-key:#a626a4; --sx-str:#3f9a4e; --sx-com:#9ca3af; --sx-num:#986801; --sx-fn:#3a6df0; --sx-punct:#383a42;
       --l-javascript:#c7a300; --l-typescript:#2f7fe0; --l-python:#2f86c4; --l-go:#0f9bb0; --l-rust:#c26a2a;
       --l-markdown:#6b7280; --l-json:#bd8a1e; --l-yaml:#9a5fc0; --l-css:#2f88d0; --l-html:#d26a30;
@@ -109,7 +109,12 @@
   .res-head .sc-in { color:var(--accent); }
   .budget { font-family:var(--mono); font-size:12px; color:var(--muted); white-space:nowrap; flex:none; text-align:right;
             display:flex; align-items:center; justify-content:flex-end; gap: 4px; }
-  .budget .of { opacity:.55; }
+  /* No opacity here. --muted on this panel is 4.9:1; fading it to .55 composites it down to 2.4:1 —
+     under AA, on the one number that IS lens's job (how full your context window is). The hierarchy
+     was never the opacity's to carry: .budget b is --accent, so the figures already lead and these
+     labels already trail. An opacity is also an UNDECLARED colour — a value the design system never
+     agreed to and cannot see. (--dim would be honest and still fails: 4.46:1.) */
+  .budget .of { color:var(--muted); }
   /* how full the context window is — lens's whole job, made visible */
   .budget .meter { display:inline-block; width:42px; height:5px; border-radius:4px; background:var(--line); overflow:hidden; }
   .budget .meter i { display:block; height:100%; background:var(--accent); border-radius:4px; }
@@ -1454,8 +1459,11 @@ $('#results').addEventListener('click', (e) => {
   runSearch(lastQuery);
 });
 function hitCard(x, terms) {
+  // tabindex + role, because cursor:pointer is a PROMISE. This head was styled as a button and wired
+  // to a click, and that is the whole of it: a keyboard user could not Tab to the results — the thing
+  // lens is for — and a screen reader announced them as text. Opening a hit was mouse-only.
   return `<div class="hit" data-path="${esc(x.path)}" data-line="${x.start}">
-    <div class="hit-head">
+    <div class="hit-head" tabindex="0" role="button" aria-label="open ${esc(x.path)} at line ${x.start}">
       <span class="p">${dirfmt(x.path)}<span class="lno">:${x.start}-${x.end}</span></span>
       <span class="meta"><span class="lang">${x.lang}</span><span class="sc">score ${x.score}</span><span>~${x.tokens} tok</span></span>
     </div>
@@ -1476,6 +1484,17 @@ $('#results').addEventListener('click', (e) => {
   if (rl) { openFile(rl.dataset.path, +rl.dataset.line); return; }
   const hit = e.target.closest('.hit');
   if (hit && hit.dataset.path) openFile(hit.dataset.path, +hit.dataset.line);
+});
+// role="button" is a PROMISE that Enter and Space work. A role that lies is worse than no role: it
+// tells a screen reader "this is a button", and then the button does nothing.
+$('#results').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const head = e.target.closest('.hit-head');
+  if (!head) return;
+  const hit = head.closest('.hit');
+  if (!hit?.dataset.path) return;
+  e.preventDefault();   // Space would scroll the results out from under you
+  openFile(hit.dataset.path, +hit.dataset.line);
 });
 
 // ── Keyboard: "/" focuses search ────────────────────────────────────────────
