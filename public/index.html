@@ -293,7 +293,10 @@
      panel, 2.33:1 on the light one. A hardcoded colour cannot flip with the theme — that is the
      whole job of a token, and the reason the light theme had an unreadable button nobody saw. */
   .ch-btn.brain { color:var(--brain); border-color:color-mix(in srgb,var(--brain) 34%,var(--line)); }
-  .ch-btn.brain:hover, .ch-btn.brain.done { color:#a78bfa; border-color:#a78bfa; background:color-mix(in srgb,#a78bfa 12%,var(--panel-2)); }
+  /* var(--brain), not the literal — AGAIN. C146 tokenised the line above and left this one, so the
+     button was readable at rest and 2.72:1 the moment you hovered it. A hover is a state nothing
+     renders, which is exactly how a literal survives a fix aimed at the literal next to it. */
+  .ch-btn.brain:hover, .ch-btn.brain.done { color:var(--brain); border-color:var(--brain); background:color-mix(in srgb,var(--brain) 12%,var(--panel-2)); }
   .ch-btn:disabled {  cursor:default; opacity:1 !important; color:var(--muted) !important; background:var(--panel-2) !important; border-color:var(--line) !important; cursor:not-allowed;}
   /* margin:0 — a <p> with no declared margin takes 1em from the BROWSER's stylesheet (14px here, the
      body font-size), which is off the declared grid and is a value you cannot find by reading this

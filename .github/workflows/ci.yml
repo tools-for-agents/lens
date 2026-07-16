@@ -181,7 +181,7 @@ jobs:
           # throws makes iris report "the state was never reached and NOTHING was audited" instead of
           # quietly grading the page behind it.
           pre: >-
-            const el=document.querySelector('#q');el.value='function';el.dispatchEvent(new Event('input',{bubbles:true}));await new Promise(r=>setTimeout(r,1500));const hit=document.querySelector('.hit-head');if(!hit) throw new Error('no hits to open — the journey to the reader starts at a search');hit.click();await new Promise(r=>setTimeout(r,1800));if(!document.querySelector('#reader').classList.contains('show')) throw new Error('clicking a hit did not open the reader');const lines=document.querySelectorAll('#code .cl').length;if(lines<5) throw new Error('the reader opened with '+lines+' lines — that is an empty room, not a file');
+            const el=document.querySelector('#q');el.value='function';el.dispatchEvent(new Event('input',{bubbles:true}));await new Promise(r=>setTimeout(r,1500));const hit=document.querySelector('.hit-head');if(!hit) throw new Error('no hits to open — the journey to the reader starts at a search');hit.click();await new Promise(r=>setTimeout(r,1800));if(!document.querySelector('#reader').classList.contains('show')) throw new Error('clicking a hit did not open the reader');const lines=document.querySelectorAll('#code .cl').length;if(lines<5) throw new Error('the reader opened with '+lines+' lines — that is an empty room, not a file');const brain=document.querySelector('.ch-btn.brain');if(!brain) throw new Error('the reader has no capture button to pose');brain.classList.add('done');
 
   # THE EMPTY STATE IS THE ONE STATE EVERY USER SEES FIRST — AND NOTHING WAS LOOKING AT IT.
   #
