@@ -5,7 +5,6 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { run } from '../src/db.js';
 
 const work = mkdtempSync(join(tmpdir(), 'lens-test-'));
 process.env.LENS_DB = join(work, 'index.db');
@@ -17,7 +16,27 @@ writeFileSync(join(src, 'auth.js'),
   `export function parseAuthHeader(req) {\n  const h = req.headers.authorization || '';\n  return h.startsWith('Bearer ') ? h.slice(7) : null;\n}\n\nexport class TokenStore {\n  constructor() { this.map = new Map(); }\n}\n`);
 writeFileSync(join(src, 'notes.md'), `# Design\n\nWe validate the websocket reconnect backoff here.\n`);
 
+// 🔑 db.js READS LENS_DB AT IMPORT — SO IT MUST NOT BE IMPORTED STATICALLY.
+// `import { run } from '../src/db.js'` used to sit at the top of this file. Static imports are
+// HOISTED: db.js ran, and froze DB_PATH to its default `./.lens/index.db`, BEFORE line 11 above
+// could point LENS_DB at the throwaway. The temp db was created, and every test then wrote to
+// `.lens/index.db` in the CURRENT DIRECTORY instead — which for the tool whose whole job is
+// indexing your repo is the developer's REAL index, at the exact default path lens ships with.
+// `npm test` silently rewrote it: measured, this suite's last test purged that index down to its
+// own six fixture files. The file header said "a throwaway DB" and the code created one; nothing
+// was lying except the import order. A dynamic import runs HERE, after the env var is set.
+const { run, DB_PATH } = await import('../src/db.js');
 const lens = await import('../src/core.js');
+
+test('the suite runs against the THROWAWAY db — never the real index in your cwd', () => {
+  // This is the guard for the bug above: it fails the moment db.js is imported before LENS_DB is
+  // set (a static import at the top of this file would do it), which is the only way DB_PATH can
+  // come back as the default. Without it the suite still passes — on your real index.
+  assert.equal(DB_PATH, process.env.LENS_DB,
+    'db.js resolved DB_PATH before the test pointed LENS_DB at a temp dir — it is about to index '
+    + 'into your actual .lens/index.db');
+  assert.ok(DB_PATH.startsWith(tmpdir()), 'and that path is under the temp dir, not the repo');
+});
 
 test('indexPath indexes the fixture files', () => {
   const r = lens.indexPath(src);
@@ -791,6 +810,53 @@ test('a REINDEX must not make a file VANISH while it is being reindexed', async 
     assert.equal(min, N,
       `every one of the ${iters} searches during a reindex must see all ${N} files — the fewest seen was ${min}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// The same guarantee as the race above, but DETERMINISTIC — no timing, no CPU luck.
+// 🔑 The race test above can only see the vanish window if the searcher happens to sample DURING it,
+// and that is a coin the hardware flips: this canary SURVIVED in CI while dying locally, and the fix
+// was to stop the reindex from starting until the searcher was up. But a race you have to ARRANGE is
+// still a race. scout hit this twice and found the way out: `atomically` takes a CALLBACK, so we do
+// not have to race the gap — we STAND IN IT. Do indexFile's exact chunk rewrite (DELETE then INSERT)
+// inside the transaction, and have a SECOND connection read at the split point. WAL gives that reader
+// a snapshot: with a real transaction it sees the OLD chunk (still there); with the BEGIN removed the
+// DELETE auto-commits and the reader sees NOTHING — 0 hits for code that is right there. Fires every
+// run, on any hardware.
+//
+// It cannot replace the race: this stands in the gap of the transaction ITSELF, so it proves the
+// primitive is atomic — not that indexFile actually CALLS it. That call site has no seam to stand in,
+// so the (now honest) race above is what guards it.
+test('atomically keeps a chunk rewrite atomic to a concurrent reader — deterministically (the VANISH canary)', async (t) => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { atomically, run: dbRun } = await import('../src/db.js');
+  const TOKEN = 'zzatomicprobe';
+  const path = 'zz-atomic-probe.js';
+  const insert = () => dbRun('INSERT INTO chunks (path, body, lang, start, "end") VALUES (?,?,?,?,?)',
+    path, `export const x = '${TOKEN}';`, 'js', 1, 1);
+  dbRun('DELETE FROM chunks WHERE path=?', path);
+  insert();
+  t.after(() => { try { dbRun('DELETE FROM chunks WHERE path=?', path); } catch { /* db already shut */ } });
+
+  // conn B: a SEPARATE connection — the concurrent reader. WAL is already on (the store is open).
+  const connB = new DatabaseSync(DB_PATH);
+  connB.exec('PRAGMA busy_timeout = 5000;');
+  t.after(() => { try { connB.close(); } catch { /* already closed */ } });
+  const readerSees = () => connB.prepare('SELECT COUNT(*) n FROM chunks WHERE chunks MATCH ?').get(TOKEN).n;
+
+  assert.equal(readerSees(), 1, 'sanity: the reader sees the chunk before any rewrite');
+
+  let seenAtGap = null;
+  atomically(() => {
+    dbRun('DELETE FROM chunks WHERE path=?', path);   // exactly what indexFile does…
+    seenAtGap = readerSees();                         // …and the concurrent reader, RIGHT in the gap
+    insert();
+  });
+
+  assert.equal(seenAtGap, 1,
+    'a reader between the chunk DELETE and INSERT must still see the file — the rewrite is one '
+    + 'transaction, not two separately-committed statements (with BEGIN removed this reads 0: the '
+    + 'file vanished mid-reindex)');
+  assert.equal(readerSees(), 1, 'and it is still there afterwards');
 });
 
 // LAST: this rebuilds the shared index into a scratch tree (like the freshness/scoped tests above), so it
