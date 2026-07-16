@@ -12,7 +12,10 @@
     --txt:#dfe4ec; --muted:#7d8794; --dim:#77808d;
     --accent:#4fd6be; --accent-dim:#2b7d70; --amber:#f2c14e;
     /* syntax */
-    --sx-key:#c792ea; --sx-str:#7fd88f; --sx-com:#5a6472; --sx-num:#f2a06a;
+    /* --sx-com was #5a6472: 2.97:1 on --panel. A COMMENT IS NOT DECORATION — it is the line that
+       says why the code is the way it is, and it was the least readable thing in the snippet.
+       #828d9d is 5.30:1 and still reads as the quiet one against --txt #dfe4ec. */
+    --sx-key:#c792ea; --sx-str:#7fd88f; --sx-com:#828d9d; --sx-num:#f2a06a;
     --sx-fn:#6fb3ff; --sx-punct:#9aa4b2;
     --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono","Cascadia Code",Menlo,monospace;
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -28,7 +31,7 @@
     --line:#d5dbe1; --line-2:#c0c9d2;
     --txt:#1f2328; --muted:#59616b; --dim:#5e6771;
     --accent:#00705f; --accent-dim:#7ecbc0; --amber:#8a5d00;   /* was #007b6c: 4.45:1 as text on the light panels — under AA */
-    --sx-key:#a626a4; --sx-str:#3f9a4e; --sx-com:#9ca3af; --sx-num:#986801; --sx-fn:#3a6df0; --sx-punct:#383a42;
+    --sx-key:#a626a4; --sx-str:#2f7d3d; --sx-com:#6b7280; --sx-num:#986801; --sx-fn:#3a6df0; --sx-punct:#383a42;   /* str was #3f9a4e (3.53:1), com was #9ca3af (2.54:1) — both under AA on --panel */
     --l-javascript:#c7a300; --l-typescript:#2f7fe0; --l-python:#2f86c4; --l-go:#0f9bb0; --l-rust:#c26a2a;
     --l-markdown:#6b7280; --l-json:#bd8a1e; --l-yaml:#9a5fc0; --l-css:#2f88d0; --l-html:#d26a30;
     --l-shell:#3f9a4e; --l-text:#6b7280; --l-sql:#b060a0;
@@ -39,7 +42,7 @@
       --line:#d5dbe1; --line-2:#c0c9d2;
       --txt:#1f2328; --muted:#59616b; --dim:#5e6771;
       --accent:#00705f; --accent-dim:#7ecbc0; --amber:#8a5d00;   /* was #007b6c: 4.45:1 as text on the light panels — under AA */
-      --sx-key:#a626a4; --sx-str:#3f9a4e; --sx-com:#9ca3af; --sx-num:#986801; --sx-fn:#3a6df0; --sx-punct:#383a42;
+      --sx-key:#a626a4; --sx-str:#2f7d3d; --sx-com:#6b7280; --sx-num:#986801; --sx-fn:#3a6df0; --sx-punct:#383a42;   /* str was #3f9a4e (3.53:1), com was #9ca3af (2.54:1) — both under AA on --panel */
       --l-javascript:#c7a300; --l-typescript:#2f7fe0; --l-python:#2f86c4; --l-go:#0f9bb0; --l-rust:#c26a2a;
       --l-markdown:#6b7280; --l-json:#bd8a1e; --l-yaml:#9a5fc0; --l-css:#2f88d0; --l-html:#d26a30;
       --l-shell:#3f9a4e; --l-text:#6b7280; --l-sql:#b060a0;
@@ -55,24 +58,24 @@
   }
   /* iris: the page scrolled sideways by 388px on a phone — a 274px rail beside `1fr`
      with no phone rule at all. The rail becomes a band on top, and the reader stacks. */
-  @media (max-width:720px) {
-    body { grid-template-columns:1fr; grid-template-areas:"top" "rail" "main"; grid-template-rows:auto auto 1fr; height:auto; overflow:auto; }
-    .rail { max-height:38vh; border-right:0; border-bottom:1px solid var(--line); }
-    .reader { grid-template-columns:1fr; }
-    /* the header bar is mode-buttons + field + budget in one non-wrapping row: 567px
-       of content in a 390px window. It has to wrap, and the field has to own the
-       second line. */
-    header.top { flex-wrap:wrap; height:auto; padding: 8px 12px; gap: 8px; }
-    .search { max-width:none; flex-wrap:wrap; width:100%; }
-    .search .field { flex:1 1 100%; order:3; }
-    .budget { order:4; margin-left: auto; }
-    .repo { display:none; }
-    main { padding-bottom: 56px; }
-  }
+  /* 🔑 THE PHONE BLOCK USED TO LIVE HERE, ABOVE EVERY RULE IT OVERRIDES — SO IT DID NOT OVERRIDE THEM.
+     A media query carries NO extra specificity. `.search .field` inside @media ties with `.search
+     .field` below it, and a tie is broken by SOURCE ORDER — so the base rule, 40 lines later, won
+     every time. The phone layout was written, reviewed, and dead: only `header.top` survived, because
+     that one selector happened to be more specific than `.top`.
+     It now sits at the END of this stylesheet, where a media query has to be. See it there. */
 
   /* ── Top bar ─────────────────────────────────────────────── */
   .top {
-    grid-area:top; display:flex; align-items:center; gap: 16px; padding: 0 16px; height:52px;
+    /* min-height, not height, and wrap at ANY width — not just under the 720px phone rule.
+       #budget is EMPTY until you search, so this bar always fit while nothing was looking at
+       the results. Fill it in ("3 of 58 hits · ~2.2k / 2.4k tok" — nowrap by design, because a
+       figure that breaks mid-token is worse than a wide one) and the row needs ~943px: at
+       tablet it drove the whole PAGE 225px wide, clipping the search bar and the budget itself.
+       A breakpoint would only move the number where it happens — a longer hit count reaches
+       past any width you pick. So the bar yields instead: it cannot overflow, at any width. */
+    grid-area:top; display:flex; align-items:center; gap: 16px; padding: 0 16px;
+    min-height:52px; flex-wrap:wrap;
     border-bottom:1px solid var(--line); background:var(--bg-2);
   }
   .logo { display:flex; align-items:center; gap: 12px; }
@@ -80,7 +83,14 @@
   .logo b { font-family:var(--mono); font-size:14px; letter-spacing:.5px; font-weight:600; }
   .logo .tag { font-family:var(--mono); font-size:12px; color:var(--muted); letter-spacing:.4px; }
   .search {
+    /* wrap here too, and for the same reason as .top: measured at tablet, this row's MIN-CONTENT is
+       826px — .mode (219, flex:none) + .field (325: a ~173px input + the 132px scope select) +
+       .budget (257, flex:none, nowrap) + gaps — against 802px of content box. No amount of shrinking
+       fits it: two of the three refuse to shrink and the third is already at its floor. So it
+       overflowed its own container and took the page with it. Wrapping drops the min-content to the
+       widest single child (325) and it fits at any width. */
     flex:1; max-width:860px; display:flex; align-items:center; gap: 12px; position:relative;
+    flex-wrap:wrap;
   }
   .search .field {
     /* min-width:0 — without it a flex item refuses to shrink below its content,
@@ -358,11 +368,42 @@
   ::-webkit-scrollbar-thumb { background:var(--line); border-radius:8px; }
   ::-webkit-scrollbar-thumb:hover { background:var(--line-2); }
 
-  @media (max-width:760px) {
+  /* 🔑 min-width:721px — THIS BLOCK IS FOR THE TWO-COLUMN LAYOUT ONLY, AND IT WAS EATING THE PHONE.
+     It collapses the rail's track ("top top" / "rail main" with the rail at 0) for the narrow end of
+     the desktop layout. But it also matched at 390px, where the phone block above has already
+     redefined the areas as ONE column — so `0 1fr` gave that single column a width of ZERO, and it
+     won on source order. Measured at 390px: header.top 24px wide (its padding, nothing else), .rail
+     0px, .main 0px, the search input FOUR PIXELS. The logo wrapped to three lines. lens on a phone
+     was a crushed header over an empty screen — the whole app, in a 0px column.
+     And the look gate PASSED it at phone, seeded and searched, because a page with nothing on it
+     cannot overflow, collide, or be unreadable: the empty room again, this time built by the CSS. */
+  @media (min-width:721px) and (max-width:760px) {
     body { grid-template-columns:0 1fr; }
     .rail { display:none; }
     .reader.show { grid-template-columns:1fr; }
     .outline { display:none; }
+  }
+  /* ── The phone layout — LAST, so it actually wins ────────────────────────── */
+  @media (max-width:720px) {
+    /* minmax(0,1fr), not 1fr: `1fr` is minmax(AUTO,1fr), and that auto floor means the track refuses
+       to shrink below its widest child's min-content. One long path in the tree made the column 393px
+       in a 390px window and pushed the WHOLE page 3px sideways. minmax(0,…) lets the track be the
+       window, and the child scroll/ellipsis where it already knows how. */
+    body { grid-template-columns:minmax(0,1fr); grid-template-areas:"top" "rail" "main"; grid-template-rows:auto auto 1fr; height:auto; overflow:auto; }
+    .rail { max-height:38vh; border-right:0; border-bottom:1px solid var(--line); }
+    .reader { grid-template-columns:1fr; }
+    .reader.show { grid-template-columns:1fr; }
+    .outline { display:none; }
+    /* the header bar is mode-buttons + field + budget in one non-wrapping row: 567px
+       of content in a 390px window. It has to wrap, and the field has to own the
+       second line. */
+    header.top { flex-wrap:wrap; height:auto; min-height:0; padding: 8px 12px; gap: 8px; }
+    .search { max-width:none; flex-wrap:wrap; width:100%; }
+    .search .field { flex:1 1 100%; order:3; }
+    .budget { order:4; margin-left: auto; }
+    .repo { display:none; }
+    main { padding-bottom: 56px; }
+    .results { padding-bottom: 56px; }   /* clear the fixed cross-tool bar */
   }
 
 /* cross-tool footer — this is one of tools-for-agents' six web views */
