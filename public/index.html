@@ -457,7 +457,12 @@ const $ = (s) => document.querySelector(s);
 // something happened.
 class ApiError extends Error {}
 
-function apiDown(msg) {
+// `bad` = the server is FINE and rejected what we asked (4xx). That is a different truth from an
+// outage, and it must not wear the outage's clothes: "the server said no — showing you nothing
+// because it was told nothing" + a RELOAD button is, for a mistyped path_glob, wrong twice. The
+// server said exactly what was wrong, and reloading is the one action that cannot fix it. Seen in
+// the pixels, not the tests — the banner was correct in every assertion and still misleading.
+function apiDown(msg, { bad = false } = {}) {
   ASKED('error');   // a failure is not an answer of "nothing"
   lastFailed = true;   // ...and busy(false) must not overwrite that when the request settles
   let b = document.getElementById('apidown');
@@ -469,18 +474,33 @@ function apiDown(msg) {
     // and cannot be faded out by a stylesheet that has never seen it.
     b.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;display:flex;gap:12px;'
       + 'align-items:center;justify-content:center;flex-wrap:wrap;padding:12px 16px;'
-      + 'background:#7f1d1d;color:#fff;font:600 14px/1.5 ui-sans-serif,system-ui,sans-serif;';
+      + 'font:600 14px/1.5 ui-sans-serif,system-ui,sans-serif;';
     document.body.appendChild(b);
   }
+  // amber for "fix your request", red for "the server is gone" — the two are not the same emergency
+  b.style.background = bad ? '#78350f' : '#7f1d1d';
+  b.style.color = '#fff';
   b.textContent = '';
   const t = document.createElement('span');
-  t.textContent = 'The server said no — this page is showing you nothing because it was told nothing. ' + msg;
+  t.textContent = bad
+    ? `lens could not run that: ${msg}`
+    : `The server said no — this page is showing you nothing because it was told nothing. ${msg}`;
+  b.append(t);
+  // The action must be one that can actually work. Reloading does not un-typo a glob; clearing the
+  // scope does, and it is the scope that is wrong in the only 4xx this page can produce today.
   const r = document.createElement('button');
-  r.textContent = 'try again';
-  r.style.cssText = 'background:#fff;color:#7f1d1d;border:0;border-radius:6px;padding:6px 12px;'
-    + 'font:700 14px/1.5 ui-sans-serif,system-ui,sans-serif;cursor:pointer;min-height:24px;';
-  r.onclick = () => location.reload();
-  b.append(t, r);
+  r.style.cssText = `background:#fff;color:${bad ? '#78350f' : '#7f1d1d'};border:0;border-radius:8px;`
+    + 'font:700 14px/1.5 ui-sans-serif,system-ui,sans-serif;cursor:pointer;'
+    + 'min-height:24px;padding:6px 12px;';
+  if (bad && scope) {
+    r.textContent = 'clear the scope';
+    r.onclick = () => { dismissApiDown(); setScope(''); };
+    b.append(r);
+  } else if (!bad) {
+    r.textContent = 'try again';
+    r.onclick = () => location.reload();
+    b.append(r);
+  }
 
   // MAKE ROOM FOR IT — measured, after the text is in, so the height is the real one.
   // A fixed bar at top:0 sits ON TOP of the app's own header, so the first cut of this
@@ -488,6 +508,17 @@ function apiDown(msg) {
   // is forced to border-box so the padding eats into a 100vh body instead of overflowing it.
   document.body.style.boxSizing = 'border-box';
   document.body.style.paddingTop = b.getBoundingClientRect().height + 'px';
+}
+
+// A 4xx banner is FIXABLE, so it must be able to go away — an outage banner never had to, because
+// only a reload cleared it. Left up after the scope is cleared, it would say "lens could not run
+// that" over a page that just ran it fine: the same lie in the other direction.
+function dismissApiDown() {
+  const b = document.getElementById('apidown');
+  if (!b) return;
+  b.remove();
+  document.body.style.paddingTop = '';
+  lastFailed = false;
 }
 
 // Only OUR "the server said no" is swallowed. A real TypeError still reaches the console,
@@ -584,7 +615,10 @@ function busyPill() {
 }
 
 addEventListener('unhandledrejection', (e) => {
-  if (e.reason instanceof ApiError) { apiDown(e.reason.message); e.preventDefault(); }
+  if (e.reason instanceof ApiError) {
+    apiDown(e.reason.message, { bad: e.reason.status >= 400 && e.reason.status < 500 });
+    e.preventDefault();
+  }
 });
 
 const api = async (p, o) => {
@@ -594,7 +628,20 @@ const api = async (p, o) => {
   // r.ok, the check that was never there. A 500 with a JSON body parses fine and
   // comes back looking exactly like data — which is how `.map is not a function`
   // ends up being what a user sees when their server falls over.
-  if (!r.ok) throw new ApiError(`${p} — HTTP ${r.status} ${r.statusText || ''}`.trim());
+  //
+  // And the STATUS LINE IS NOT THE REASON. The routes answer a bad request with 400 and
+  // { error: "<what you did wrong, and what to do instead>" } — a path_glob that matches no
+  // indexed file names itself and lists the real paths. Reading only r.status threw all of
+  // that away and showed "HTTP 400 Bad Request": the server said exactly what was wrong, and
+  // the page repeated the number instead. Prefer the body's reason; keep the status line for
+  // the cases that have no body (a proxy 502, a dead socket).
+  if (!r.ok) {
+    let reason = '';
+    try { reason = (await r.clone().json())?.error || ''; } catch { /* no json body — a real outage */ }
+    const err = new ApiError(reason || `${p} — HTTP ${r.status} ${r.statusText || ''}`.trim());
+    err.status = r.status;   // 4xx is YOUR request; 5xx is the server. They do not get the same banner.
+    throw err;
+  }
   return await r.json();
   } finally { busy(false); }
 };
