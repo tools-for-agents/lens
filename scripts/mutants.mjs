@@ -83,6 +83,12 @@ const CANARIES = [
     into: 'const READ_MAX_TOKENS = Infinity;',
   },
   {
+    why: 'the highlighter must never EAT a character — its tokenizer loop appends only what it matches, and exec() with /g skips forward past anything unmatchable, so `#4fd6be` rendered as `#fd6be` and `padding: 12px 16px` as `padding: px px`. lens exists to show an agent the code; the one thing it may never do is show code the file does not contain',
+    file: 'public/highlight.js',
+    find: '|([^\\w\\s\'"`]+|\\s+)|([\\s\\S])/g;',
+    into: '|([^\\w\\s\'"`]+|\\s+)/g;',
+  },
+  {
     why: 'a path_glob matching NO indexed file is a MISTAKE, not "no matches" — SQLite GLOB has no {a,b} braces, so `*.{js,ts}` (the glob every JS tool teaches) matched nothing and lens answered "0 hits", which an agent reads as "your code does not contain that"',
     file: 'src/core.js',
     find: '  if (path_glob) requireGlobMatches(path_glob);',

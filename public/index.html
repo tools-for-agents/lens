@@ -516,7 +516,8 @@
     </div>
   </div>
 
-<script>
+<script type="module">
+import { highlight, esc, KEYWORDS } from './highlight.js';
 const $ = (s) => document.querySelector(s);
 // ── WHEN THE SERVER SAYS NO, SAY SO ──────────────────────────────────────────────
 //
@@ -725,7 +726,7 @@ const api = async (p, o) => {
   return await r.json();
   } finally { busy(false); }
 };
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+// esc comes from ./highlight.js too — one escaper, used by the page and by the tokenizer.
 const langColor = (l) => getComputedStyle(document.documentElement).getPropertyValue('--l-' + l).trim() || 'var(--l-text)';
 
 // ── Theme (light / dark) ─────────────────────────────────────────────────────
@@ -1175,39 +1176,9 @@ function renderCode(body, lang) {
 }
 
 // ── Lightweight zero-dep syntax highlighter ─────────────────────────────────
-const KEYWORDS = {
-  javascript:'const let var function return if else for while class extends new import export from default async await try catch finally throw typeof instanceof of in do switch case break continue this super yield static get set null true false undefined void delete'.split(' '),
-  python:'def class return if elif else for while import from as try except finally raise with lambda yield global nonlocal pass break continue and or not in is None True False async await self'.split(' '),
-  go:'func package import type struct interface map chan go defer return if else for range switch case break continue var const nil true false make new'.split(' '),
-  rust:'fn let mut pub struct enum trait impl mod use match if else for while loop return self Self as ref move async await dyn where const static true false Some None Ok Err'.split(' '),
-  json:[], text:[], markdown:[], yaml:'true false null'.split(' '), sql:'select from where join on group by order limit insert update delete create table view index into values as and or not null'.split(' '),
-};
-KEYWORDS.typescript = KEYWORDS.javascript.concat('interface type enum namespace declare readonly public private protected implements keyof'.split(' '));
-KEYWORDS.c = KEYWORDS.cpp = 'int char void float double return if else for while struct class public private include define const static new delete true false null nullptr auto'.split(' ');
-KEYWORDS.java = KEYWORDS.cpp;
-KEYWORDS.css = [];
-KEYWORDS.shell = 'if then else fi for do done while case esac function return export local echo cd'.split(' ');
+// KEYWORDS + highlight() now live in ./highlight.js — see the import at the top of this script.
+// They were extracted so they could be TESTED: the tokenizer was deleting characters from your code.
 
-function highlight(text, lang) {
-  const kws = KEYWORDS[lang] || KEYWORDS.javascript;
-  // tokenizer: comments, strings, numbers, identifiers, other — HTML-escaped per token
-  const re = /(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\b\d[\d_.]*\b)|([A-Za-z_$][\w$]*)|([^\w\s]+|\s+)/g;
-  let out = '', m;
-  const lineComment = (lang === 'python' || lang === 'shell' || lang === 'yaml') ? '#' : '//';
-  while ((m = re.exec(text))) {
-    if (m[1]) { // comment — only treat # as comment for #-comment langs
-      if (m[1][0] === '#' && lineComment !== '#') { out += esc(m[1]); }
-      else out += `<span class="sx-com">${esc(m[1])}</span>`;
-    } else if (m[2]) out += `<span class="sx-str">${esc(m[2])}</span>`;
-    else if (m[3]) out += `<span class="sx-num">${esc(m[3])}</span>`;
-    else if (m[4]) {
-      if (kws.includes(m[4])) out += `<span class="sx-key">${esc(m[4])}</span>`;
-      else if (text[re.lastIndex] === '(') out += `<span class="sx-fn">${esc(m[4])}</span>`;
-      else out += esc(m[4]);
-    } else out += esc(m[5] || '');
-  }
-  return out || '&nbsp;';
-}
 
 // ── Search ──────────────────────────────────────────────────────────────────
 let searchTimer;
