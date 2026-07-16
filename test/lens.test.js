@@ -99,7 +99,29 @@ test('search owns up to what the budget squeezed out — and names the ceiling t
 
 test('search can restrict by path glob', () => {
   const r = lens.search('websocket reconnect', { path_glob: '*notes.md' });
-  assert.ok(r.results.every((x) => x.path.endsWith('notes.md')));
+  // 🔑 `.every()` IS TRUE ON AN EMPTY ARRAY. Without the length check this test passed while the glob
+  // matched NOTHING — proven by binding a glob that can never match: it stayed green. A filter test
+  // that cannot tell "filtered correctly" from "filtered everything away" is not testing the filter.
+  assert.ok(r.results.length >= 1, 'the glob KEPT the matching file — an empty result passes every() for free');
+  assert.ok(r.results.every((x) => x.path.endsWith('notes.md')), 'and dropped everything else');
+});
+
+test('a path_glob that matches NO indexed file is a MISTAKE, not "no matches"', () => {
+  // SQLite GLOB is not minimatch: no {a,b} expansion. `*.{js,md}` — the shape every JS tool teaches —
+  // matched nothing while `*.js` matched fine, and both answered "0 hits". That is the confident wrong
+  // answer: an agent reads it as "your code does not contain that" and stops, over code that is there.
+  assert.throws(() => lens.search('websocket reconnect', { path_glob: '*.{js,md}' }),
+    /NOT "no matches".*brace expansion/s,
+    'a brace glob names the real problem — and says GLOB has no braces');
+
+  assert.throws(() => lens.search('websocket reconnect', { path_glob: 'no/such/dir/*.js' }),
+    /no indexed file matches path_glob/,
+    'and so does any glob that matches no indexed file');
+
+  // …but a REAL glob over a real subtree that simply holds no match is an honest "no matches" — the
+  // check is against the INDEXED PATHS, not the query results, so this must stay quiet.
+  const quiet = lens.search('zzzznosuchtokenanywhere', { path_glob: '*notes.md' });
+  assert.equal(quiet.results.length, 0, 'an honest absence is still an empty result, not an error');
 });
 
 test('outline extracts symbols with line numbers', () => {
@@ -341,10 +363,16 @@ test('search can be scoped to a directory — the glob the UI now sends', async 
     assert.deepEqual(paths(scoped), ['src/a.js', 'src/deep/b.js'], 'the scope covers the subtree and nothing outside it');
     assert.ok(scoped.count < all.count, 'a scope narrows the answer');
 
-    // a scope that matches nothing must find NOTHING — silently searching the whole
-    // repo instead would be the dangerous failure
-    const none = await fetch(base + '/api/search?q=kiwi&k=30&glob=' + encodeURIComponent('nowhere/*')).then((r) => r.json());
-    assert.equal(none.count, 0, 'a scope with no files finds nothing, not everything');
+    // A scope that matches nothing must NEVER widen to the whole repo — that is what this test was
+    // written for, and it still holds. But "0 hits" was the wrong way to say it: it is the identical
+    // answer to "your code is not here", so an agent believes the code is missing and stops. A glob
+    // matching no INDEXED file is a wrong filter, and lens now says so (400 + the real paths) instead
+    // of an empty page that looks like an answer. See requireGlobMatches in core.js.
+    const none = await fetch(base + '/api/search?q=kiwi&k=30&glob=' + encodeURIComponent('nowhere/*'));
+    const body = await none.json();
+    assert.equal(none.status, 400, 'a wrong filter is a 400, not a 200 with nothing in it');
+    assert.match(body.error, /NOT "no matches"/, 'and it names the filter as the problem');
+    assert.ok(!body.results?.length, 'and ABOVE ALL it does not widen to the whole repo');
   } finally { server.close(); }
 });
 

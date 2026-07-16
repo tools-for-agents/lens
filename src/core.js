@@ -284,8 +284,36 @@ function requireIndex() {
     + `Index a directory first:  lens index <path>   (MCP: lens_index { path })`);
 }
 
+// A GLOB THAT MATCHES NO INDEXED FILE IS A MISTAKE, NOT AN ANSWER.
+//
+// The same reasoning as requireIndex above, one level in. `path_glob` is a FILTER, and a filter that is
+// wrong looks EXACTLY like code that is not there: both are "0 hits". The difference matters — one means
+// "look elsewhere", the other means "your search was malformed" — and lens said the same thing for both.
+//
+// 🔑 SQLITE GLOB IS NOT MINIMATCH. There is no {a,b} brace expansion, so `src/**/*.{js,ts}` — the glob
+// every JS tool (minimatch, globby, gitignore) teaches an agent to write — matches NOTHING. Measured:
+// `*.{js,md}` returned 0 hits over a tree where `*.js` returned 2, and the two answers were identical.
+// An agent reads that as "your code does not contain that" and stops looking at code that is right there.
+//
+// Globs are infinite, but the INDEXED PATHS ARE A KNOWABLE FINITE SET — which is exactly what lets us
+// tell a wrong filter from an honest absence. Note the check is against the indexed paths, NOT the query
+// results: scoping to a real subtree that holds no match is a legitimate "no matches" and stays quiet.
+function requireGlobMatches(path_glob) {
+  const n = get(`SELECT COUNT(*) n FROM files WHERE path GLOB ?`, path_glob)?.n ?? 0;
+  if (n > 0) return;
+  const sample = all(`SELECT path FROM files ORDER BY path LIMIT 3`).map((r) => r.path);
+  const braces = /[{}]/.test(path_glob)
+    ? ' SQLite GLOB has no {a,b} brace expansion — use one glob per search, or a prefix like "src/*".'
+    : '';
+  throw new Error(
+    `no indexed file matches path_glob "${path_glob}" — this is NOT "no matches", the FILTER is wrong.${braces}`
+    + ` Indexed paths look like: ${sample.join(', ')}`);
+}
+
 export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
   requireIndex();
+  // before the query is even parsed: a filter that can match nothing makes every later answer a lie
+  if (path_glob) requireGlobMatches(path_glob);
   // Harden numeric args: bad input (NaN from a non-numeric query param, ≤0)
   // falls back to the default. Unguarded, NaN k makes the SQL `LIMIT ?` bind
   // fail (→ error result) and `results.length >= NaN` never break / the budget

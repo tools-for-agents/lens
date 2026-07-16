@@ -45,10 +45,12 @@ const CANARIES = [
     into: '  if (false) return true;',
   },
   {
+    // anchored WITH its COUNT query: requireGlobMatches guards the same shape one level in ("a filter
+    // that matched nothing"), so a bare `if (n > 0) return;` now matches twice and watches neither.
     why: 'searching an unindexed tree is an ERROR, not "your code does not contain that"',
     file: 'src/core.js',
-    find: '  if (n > 0) return;',
-    into: '  if (n >= 0) return;',
+    find: '  const n = get(`SELECT COUNT(*) n FROM files`)?.n ?? 0;\n  if (n > 0) return;',
+    into: '  const n = get(`SELECT COUNT(*) n FROM files`)?.n ?? 0;\n  if (n >= 0) return;',
   },
   {
     why: 'node_modules is not your code — without IGNORE_DIRS every search comes back full of vendor internals',
@@ -79,6 +81,12 @@ const CANARIES = [
     file: 'src/core.js',
     find: 'const READ_MAX_TOKENS = 4000;   // ~16KB: generous for 60 lines of real code, fatal to nothing real',
     into: 'const READ_MAX_TOKENS = Infinity;',
+  },
+  {
+    why: 'a path_glob matching NO indexed file is a MISTAKE, not "no matches" — SQLite GLOB has no {a,b} braces, so `*.{js,ts}` (the glob every JS tool teaches) matched nothing and lens answered "0 hits", which an agent reads as "your code does not contain that"',
+    file: 'src/core.js',
+    find: '  if (path_glob) requireGlobMatches(path_glob);',
+    into: '  /* glob unchecked */',
   },
   {
     why: 'a REINDEX must not make a file VANISH — split apart, DELETE-then-INSERT lets a search see ZERO chunks and answer "your code does not contain that"',
