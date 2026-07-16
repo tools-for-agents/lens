@@ -83,6 +83,12 @@ const CANARIES = [
     into: 'const READ_MAX_TOKENS = Infinity;',
   },
   {
+    why: 'two quiet greys nobody can tell apart are ONE grey, and the spare is the twin that fails AA where the other passes: --dim #77808d sat 20.2 from --muted #7d8794 (iris calls a game palette "indistinct" below 30) and measured 4.46:1 on --panel — including the search placeholder, on every page load, which the eye cannot even report because a placeholder is not a text node',
+    file: 'public/index.html',
+    find: '    --txt:#dfe4ec; --muted:#7d8794;',
+    into: '    --txt:#dfe4ec; --muted:#7d8794; --dim:#77808d;',
+  },
+  {
     why: 'the highlighter must never EAT a character — its tokenizer loop appends only what it matches, and exec() with /g skips forward past anything unmatchable, so `#4fd6be` rendered as `#fd6be` and `padding: 12px 16px` as `padding: px px`. lens exists to show an agent the code; the one thing it may never do is show code the file does not contain',
     file: 'public/highlight.js',
     find: '|([^\\w\\s\'"`]+|\\s+)|([\\s\\S])/g;',
