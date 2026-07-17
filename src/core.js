@@ -326,7 +326,11 @@ export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
              FROM chunks WHERE chunks MATCH ?`;
   const args = [m];
   if (path_glob) { sql += ` AND path GLOB ?`; args.push(path_glob); }
-  sql += ` ORDER BY score LIMIT ?`; args.push(Math.max(k * 3, 24));
+  // 🔑 bm25 score IS NOT UNIQUE — two chunks with the same term frequencies and length score
+  // identically, and ORDER BY a tie falls to rowid, which a re-index changes. Tie-break on the
+  // chunk's stable identity, (path, start): unique, and the same across a re-index (chunking is
+  // deterministic), which rowid is not. Same class of fix as the timestamp orderings elsewhere.
+  sql += ` ORDER BY score, path, start LIMIT ?`; args.push(Math.max(k * 3, 24));
   let rows;
   try { rows = all(sql, ...args); } catch (e) { return { query, error: String(e.message), results: [] }; }
 
