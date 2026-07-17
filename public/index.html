@@ -331,13 +331,17 @@
   /* 🔑 THE MAP FILLS TO THE VIEWPORT BOTTOM, AND THE CROSS-TOOL FOOTER IS FIXED THERE. The treemap
      lays its tiles out into #tmCanvas.clientHeight, which reached the very bottom of the window —
      right under the always-fixed .xtk bar — so the last row's filename labels were clipped behind
-     it (25px of overlap at tablet). `main` gets a 56px bottom pad under 720px for exactly this, but
-     the map is height:100% and the footer is fixed at EVERY width, so it needs the clearance
-     everywhere. box-sizing:border-box means this padding shrinks the canvas the layout measures,
-     which pulls the bottom tiles up out from under the bar. 56px is the number this file already
-     uses for exactly this (`main`/`.results` under 720px) — the labels sit a little below their
-     tile's box, so it needs the full clearance the other views use, not just the footer's height. */
-  .tmap { display:flex; flex-direction:column; height:100%; overflow:hidden; padding-bottom:56px; }
+     it. The map is height:100% and the footer is fixed at EVERY width, so it needs bottom
+     clearance everywhere (main/.results only pad under 720px). box-sizing:border-box means this
+     padding shrinks the canvas the layout measures, pulling the bottom tiles up out from under
+     the bar.
+     🔑 96px, not 56 — and the difference is a real lesson. 56 (the number main/.results use for
+     this footer) left only ~8px of margin, so a slightly different tile layout clipped again and
+     the gate went flaky. The treemap is NOT like the other views: its directory headers stack, so
+     the rendered map runs ~25px TALLER than cv.clientHeight, and the bottom tiles sit that much
+     lower than the padding alone accounts for. 96px clears the lowest label by 33px at tablet
+     (the tightest viewport) — measured, with room to spare rather than three pixels of it. */
+  .tmap { display:flex; flex-direction:column; height:100%; overflow:hidden; padding-bottom:96px; }
   .tmap[hidden] { display:none; }
   .tm-head { display:flex; align-items:center; gap: 16px; padding: 12px 16px; border-bottom:1px solid var(--line);
     background:var(--bg-2); font-family:var(--mono); font-size:12px; color:var(--muted); }
