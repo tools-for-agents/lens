@@ -96,6 +96,12 @@ jobs:
           name: lens
           tokens: kit      # the kit's ONE design system — iris/tokens.json, not a copy
           strict: true     # drift is a regression now; a gate is what keeps it from creeping back
+          # 🔑 THIS REPO IS WHY --hover EXISTS AND WAS THE LAST ONE NOT USING IT. `.ch-btn.brain:hover`
+          # shipped here at 2.72:1 and had to be found BY HAND, because JS cannot pose :hover — it is
+          # the browser's own, and no gate could render it. The tool that came out of that has been
+          # gating cortex, anvil and recall (all three had a real bug) and never gated lens.
+          # These 7 are what the landing page can reach; the other 14 are named in the two gates below.
+          hover: '.mode button, .sc-sel, .scope .sc-x, .tfile, .tg-head, .theme-btn, .xtk a'
 
   # ...AND THE RESULTS VIEW — THE ONE STATE LENS EXISTS FOR — HAD NEVER BEEN LOOKED AT.
   #
@@ -139,8 +145,13 @@ jobs:
           # Drive the app into the state, then REFUSE to audit an empty one: a --pre that throws
           # makes iris report "the state was never reached and NOTHING was audited" instead of
           # quietly grading the landing page again and calling it results.
+          #
+          # The sleep(1500) that used to be here was a BET: it passes on a laptop and fails on a
+          # loaded runner. cortex's newest gate caught its own panel 17px from home, mid-slide, on
+          # the first CI run that ever opened it. A poll waits for the hits to ARRIVE.
+          hover: '.hit, .mode button, .sc-sel, .scope .sc-x, .tfile, .tg-head, .theme-btn, .xtk a, .sq-b'
           pre: >-
-            const el=document.querySelector('#q');el.value='function';el.dispatchEvent(new Event('input',{bubbles:true}));await new Promise(r=>setTimeout(r,1500));const hits=document.querySelectorAll('#results .hit');if(!hits.length) throw new Error('drove a search and the page rendered NO hits — this would be an audit of an empty results view');
+            const until=async(f,ms=9000)=>{const t=Date.now()+ms;while(Date.now()<t){if(f())return true;await new Promise(r=>setTimeout(r,50));}throw new Error('timed out waiting for the hits to arrive');};const el=document.querySelector('#q');el.value='function';el.dispatchEvent(new Event('input',{bubbles:true}));await until(()=>document.querySelectorAll('#results .hit').length>0);const hits=document.querySelectorAll('#results .hit');if(!hits.length) throw new Error('drove a search and the page rendered NO hits — this would be an audit of an empty results view');
 
   # ...AND THE READER — WHERE YOU ACTUALLY READ THE CODE — WAS THE LAST UNSEEN STATE.
   #
@@ -180,8 +191,17 @@ jobs:
           # search → click the first hit → assert the reader is OPEN and has LINES in it. A --pre that
           # throws makes iris report "the state was never reached and NOTHING was audited" instead of
           # quietly grading the page behind it.
+          #
+          # This is where .ch-btn.brain lives — the button whose :hover shipped at 2.72:1 and had to be
+          # found by hand. It is posed .done below AND hovered here: iris forces states after --pre on
+          # purpose, so a posed button can be hovered too, which is the combination nobody renders.
+          #
+          # Opening a file is also what fills the recent strip (pushRecentFile) — it is localStorage-
+          # backed and empty until you read something, so no gate reaches it by loading a URL.
+          # The two sleeps that used to open this (1500/1800) were bets. Polls now.
+          hover: '.ch-btn, .ch-btn.brain, .cl .n, .oh-jump, .osym, .osym-r, .xtk a, .recent .rchip, .recent .rh .clr'
           pre: >-
-            const el=document.querySelector('#q');el.value='function';el.dispatchEvent(new Event('input',{bubbles:true}));await new Promise(r=>setTimeout(r,1500));const hit=document.querySelector('.hit-head');if(!hit) throw new Error('no hits to open — the journey to the reader starts at a search');hit.click();await new Promise(r=>setTimeout(r,1800));if(!document.querySelector('#reader').classList.contains('show')) throw new Error('clicking a hit did not open the reader');const lines=document.querySelectorAll('#code .cl').length;if(lines<5) throw new Error('the reader opened with '+lines+' lines — that is an empty room, not a file');const brain=document.querySelector('.ch-btn.brain');if(!brain) throw new Error('the reader has no capture button to pose');brain.classList.add('done');
+            const until=async(f,ms=9000)=>{const t=Date.now()+ms;while(Date.now()<t){if(f())return true;await new Promise(r=>setTimeout(r,50));}throw new Error('timed out waiting for the reader to arrive');};const el=document.querySelector('#q');el.value='function';el.dispatchEvent(new Event('input',{bubbles:true}));await until(()=>document.querySelectorAll('#results .hit').length>0);const hit=document.querySelector('.hit-head');if(!hit) throw new Error('no hits to open — the journey to the reader starts at a search');hit.click();await until(()=>document.querySelector('#reader').classList.contains('show'));await until(()=>document.querySelectorAll('#code .cl').length>=5);const lines=document.querySelectorAll('#code .cl').length;if(lines<5) throw new Error('the reader opened with '+lines+' lines — that is an empty room, not a file');await until(()=>document.querySelectorAll('.recent .rchip').length>0);const brain=document.querySelector('.ch-btn.brain');if(!brain) throw new Error('the reader has no capture button to pose');brain.classList.add('done');
 
   # THE EMPTY STATE IS THE ONE STATE EVERY USER SEES FIRST — AND NOTHING WAS LOOKING AT IT.
   #
