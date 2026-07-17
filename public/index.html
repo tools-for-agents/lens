@@ -252,7 +252,11 @@
   /* references view */
   .refgroup .hit-head { cursor:default; }
   .reflines { padding: 4px 0; }
-  .refline { display:flex; gap: 12px; align-items:baseline; padding: 4px 16px; cursor:pointer; font-family:var(--mono); font-size:12px; }
+  /* 8px vertical, not 4px: at 4px this row is 22px, under the 24px touch minimum — and unlike the
+     outline (display:none under 720px), the refs view is on screen on a phone, so a mobile reader
+     really is aiming at it. 8px lands the row at 30px AND stays on the 4px grid (6px would clear
+     the height but is itself off-grid — off-grid-spacing catches that, so it is not a fix). */
+  .refline { display:flex; gap: 12px; align-items:baseline; padding: 8px 16px; cursor:pointer; font-family:var(--mono); font-size:12px; }
   .refline:hover { background:var(--panel-2); }
   .refline .rl { color:var(--muted); min-width:46px; text-align:right; flex:0 0 auto; font-variant-numeric:tabular-nums; }
   .refline code { color:var(--txt); white-space:pre-wrap; word-break:break-word; }
@@ -341,8 +345,16 @@
     box-shadow:inset 0 0 0 1px var(--panel); }   /* the gap is drawn, not subtracted — area stays honest */
   .tm-file:hover { filter:brightness(1.35); outline-color:var(--txt); z-index:2; }
   .tm-file.active { outline-color:var(--accent); }
-  .tm-file .nm { font-family:var(--mono); font-size:12px; color:#0c0e11; padding: 0 4px;
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; font-weight:600; }
+  /* 🔑 THE LABEL SITS ON A COLOUR IT DOES NOT CHOOSE. The tile background is langColor(f.lang) —
+     a different colour per language, and `:hover` brightens it by 1.35 — so #0c0e11 was 4.39:1 on
+     the yaml purple (ci.yml) and fine on the yellows. Fixed text on a variable fill cannot be
+     tuned per colour; give it its own surface. A translucent near-white chip means the black label
+     always sits on ~white (≈18:1) whatever the tile is, and reads as a pill rather than ink poured
+     on paint. Measured on the worst tile (the brightened yaml purple): the label is now on its own
+     background, not the tile's. */
+  .tm-file .nm { font-family:var(--mono); font-size:12px; color:#0c0e11; padding: 0 4px; border-radius:4px;
+    background:rgba(255,255,255,.82);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:calc(100% - 8px); font-weight:600; }
   :root[data-theme="light"] .tm-file .nm { color:#0c0e11; }
   .tm-tip { position:fixed; z-index:40; pointer-events:none; background:var(--panel); border:1px solid var(--line-2);
     border-radius:8px; padding: 8px 12px; box-shadow:0 8px 24px rgba(0,0,0,.35); font-family:var(--mono); font-size:12px;
@@ -1481,7 +1493,7 @@ function refGroup(g, sym) {
   const re = new RegExp('(' + sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'g');
   return `<div class="hit refgroup">
     <div class="hit-head"><span class="p">${dirfmt(g.path)}</span><span class="meta"><span class="lang">${esc(g.lang)}</span><span>${g.refs.length} ref${g.refs.length === 1 ? '' : 's'}</span></span></div>
-    <div class="reflines">${g.refs.map((ref) => `<div class="refline" data-path="${esc(g.path)}" data-line="${ref.line}"><span class="rl">${ref.line}</span><code>${esc(ref.text).replace(re, '<mark>$1</mark>')}</code></div>`).join('')}</div>
+    <div class="reflines">${g.refs.map((ref) => `<div class="refline" data-path="${esc(g.path)}" data-line="${ref.line}" tabindex="0" role="button" aria-label="Open ${esc(g.path)} at line ${ref.line}"><span class="rl">${ref.line}</span><code>${esc(ref.text).replace(re, '<mark>$1</mark>')}</code></div>`).join('')}</div>
   </div>`;
 }
 
@@ -1559,6 +1571,13 @@ $('#results').addEventListener('click', (e) => {
 // tells a screen reader "this is a button", and then the button does nothing.
 $('#results').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
+  // A reference line jumps to that line on click — the same "click to open" the outline's .osym
+  // rows have, and those were given tabindex/role/keydown from the start (line ~908). The refs
+  // view got the cursor and the click and none of the keyboard, so 34 reference lines were
+  // mouse-only and unannounced — the reader that lens is FOR, an agent or a screen-reader user,
+  // could see every reference and reach none. role="button" is a promise; this keeps it.
+  const rl = e.target.closest('.refline');
+  if (rl) { e.preventDefault(); openFile(rl.dataset.path, +rl.dataset.line); return; }
   const head = e.target.closest('.hit-head');
   if (!head) return;
   const hit = head.closest('.hit');

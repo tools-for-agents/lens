@@ -153,6 +153,60 @@ jobs:
           pre: >-
             const until=async(f,ms=9000)=>{const t=Date.now()+ms;while(Date.now()<t){if(f())return true;await new Promise(r=>setTimeout(r,50));}throw new Error('timed out waiting for the hits to arrive');};const el=document.querySelector('#q');el.value='function';el.dispatchEvent(new Event('input',{bubbles:true}));await until(()=>document.querySelectorAll('#results .hit').length>0);const hits=document.querySelectorAll('#results .hit');if(!hits.length) throw new Error('drove a search and the page rendered NO hits — this would be an audit of an empty results view');
 
+  # THE OTHER TWO MODES: refs and map. lens has three (⌕ search · ⇉ refs · ◱ map), and `look`/
+  # `look-results` only ever rendered search. So the references view and the treemap — half the
+  # tool's surface — had never been on screen in CI, and each held a real bug:
+  #
+  #   .refline (refs) — 34 reference lines, cursor:pointer, wired to openFile, and NOT keyboard-
+  #     reachable: no tabindex, no role, no key handler. The outline's .osym rows do the identical
+  #     "click to jump" and were given all three from the start (line ~908); the refs view got the
+  #     cursor and the click and none of the keyboard. A `high` under the newly-gating
+  #     unreachable-control, plus a 22px tap-target on a view that IS shown on a phone.
+  #   .tm-file (map) — the filename label was #0c0e11 on langColor(f.lang), which :hover brightens.
+  #     Fine on the yellow tiles, 4.39:1 on the yaml purple. Fixed text on a variable fill can't be
+  #     tuned per colour, so the label got its own translucent surface.
+  #
+  # refs: the input is debounced (input event, not Enter). map: the treemap needs room to lay out,
+  # so it is audited at tablet+desktop — a 2D area chart is not a phone view, the way the outline
+  # rail (display:none under 720px) is not either.
+  look-views:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Serve it, THEN prove refs and the map have data
+        run: |
+          node src/cli.js index .
+          node src/cli.js serve &
+          for i in $(seq 30); do curl -sf http://localhost:7900/api/stats >/dev/null && break; sleep 1; done
+          n=$(curl -sf "http://localhost:7900/api/references?symbol=api" | node -pe "JSON.parse(require('fs').readFileSync(0)).count ?? 0")
+          echo "references to 'api': $n"
+          test "$n" -gt 0 || { echo "::error::0 references — the refs view would be empty"; exit 1; }
+      - name: refs — the reference lines nothing could reach with a keyboard
+        uses: tools-for-agents/iris@main
+        with:
+          url: http://localhost:7900/
+          viewports: phone,tablet,desktop
+          name: lens-refs
+          tokens: kit
+          strict: true
+          hover: '.refline'
+          pre: >-
+            const until=async(f,ms=9000,w='')=>{const t=Date.now()+ms;while(Date.now()<t){const v=f();if(v)return v;await new Promise(r=>setTimeout(r,50));}throw new Error('timed out waiting for '+w);};await until(()=>document.querySelector('[data-m="refs"]'),9000,'the mode bar');document.querySelector('[data-m="refs"]').click();const q=document.querySelector('#q');q.value='api';q.dispatchEvent(new Event('input',{bubbles:true}));const rl=await until(()=>{const n=document.querySelectorAll('.refline');return n.length?n:null;},9000,'the reference lines');if(rl[0].getAttribute('tabindex')!=='0'||rl[0].getAttribute('role')!=='button') throw new Error('a reference line is mouse-only again — no tabindex/role');
+      - name: map — the treemap label on a colour it does not choose
+        uses: tools-for-agents/iris@main
+        with:
+          url: http://localhost:7900/
+          viewports: tablet,desktop
+          name: lens-map
+          tokens: kit
+          strict: true
+          hover: '.tm-file'
+          pre: >-
+            const until=async(f,ms=9000,w='')=>{const t=Date.now()+ms;while(Date.now()<t){const v=f();if(v)return v;await new Promise(r=>setTimeout(r,50));}throw new Error('timed out waiting for '+w);};await until(()=>document.querySelector('[data-m="map"]'),9000,'the mode bar');document.querySelector('[data-m="map"]').click();await until(()=>document.querySelectorAll('.tm-file').length>0,9000,'the treemap files');
+
   # ...AND THE READER — WHERE YOU ACTUALLY READ THE CODE — WAS THE LAST UNSEEN STATE.
   #
   # `look` renders the landing page. `look-results` (above) types a query and renders the hits.
