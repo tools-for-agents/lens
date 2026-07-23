@@ -274,7 +274,12 @@
     position:sticky; top:0; z-index:2; display:flex; align-items:center; gap: 12px; padding: 12px 16px;
     background:var(--bg-2); border-bottom:1px solid var(--line); font-family:var(--mono); font-size:12px;
   }
-  .code-head .path { color:var(--txt); }
+  /* The path is dir/ + filename — one long unbreakable string for a deeply-nested file. As a flex
+     item its default min-width is its whole content, so a long path pushed the sticky header (and
+     the page) sideways on a phone. min-width:0 lets it shrink; overflow-wrap:anywhere wraps it only
+     when it must (desktop stays one line) — and wraps rather than ellipsis-clips so the FILENAME at
+     the end stays visible. Same shape iris caught on its own dashboard (C231). */
+  .code-head .path { color:var(--txt); min-width:0; overflow-wrap:anywhere; }
   .code-head .path .d { color:var(--muted); }
   .code-head .cm { margin-left: auto; display:flex; align-items:center; gap: 12px; color:var(--muted); }
   /* 🔑 A LANGUAGE COLOUR IS NOT A TEXT BACKGROUND. This printed the language on a pill filled with
