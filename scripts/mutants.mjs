@@ -118,6 +118,25 @@ const CANARIES = [
     find: '  return { files: total, shown: rows.length, truncated: total > rows.length, by_lang: byLang, tree: rows };',
     into: '  return { files: rows.length, shown: rows.length, truncated: total > rows.length, by_lang: byLang, tree: rows };',
   },
+  {
+    // The CLI's positional finder used to be `rest.find((a) => !a.startsWith('-'))`, which in
+    // `lens search -k 3 "parse auth header"` returns `3` — the VALUE of the flag in front of it.
+    // Un-consuming the value here puts it back in the positionals and reproduces that exactly.
+    why: "a flag's VALUE is not the query — `lens search -k 3 \"parse auth header\"` searched the index for the literal string \"3\", printed \"— 0 hits, ~0 tokens —\" and exited 0, which an agent reads as \"your codebase does not contain that\" (and with --glob first it came back with ranked snippets for the GLOB, which does not even look like a failure)",
+    file: 'src/cli.js',
+    find: '        const v = eq > 0 ? a.slice(eq + 1) : argv[++i];',
+    into: '        const v = eq > 0 ? a.slice(eq + 1) : argv[i + 1];',
+  },
+  {
+    // Anchored at the CALL SITE, not at the scoping in core.stats(): dropping the argument
+    // here is the defect VERBATIM as it shipped, and it still prints a number — mutating
+    // core instead just makes the query throw, which kills the canary for the wrong reason.
+    // A canary must reproduce the LIE, not a crash near it.
+    why: 'the size of the haystack must be the size of the SCOPE — `search --glob "mcp/*"` finding nothing announced "searched 20 files / 125 chunks matching \\"mcp/*\\"" for a ONE-file filter, telling a model its filter swept twenty files and none of them contain the symbol (it is in src/core.js, and the unscoped search finds it). A vague "0 hits" claims nothing; a wrong number claims something, and invites even less of a second look',
+    file: 'src/cli.js',
+    find: '      const s = stats({ path_glob: glob });',
+    into: '      const s = stats();',
+  },
 ];
 
 // spawnSync returns status:null when IT kills the child for exceeding the timeout — a TIMEOUT,

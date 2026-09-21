@@ -452,6 +452,252 @@ test('...but a genuine zero-result search still says zero', async (t) => {
   assert.match(r.stdout, /0 hits/, 'and it says so plainly');
 });
 
+// ── ...AND THE CLI'S OWN FRONT DOOR, WHICH NEITHER GUARD COVERS ─────────────────
+// requireIndex and requireGlobMatches (above) both exist to stop lens saying "your code
+// does not contain that" when it never looked. The CLI walked straight past them, because
+// the lie was told BEFORE core was called: every command found its positional argument with
+//
+//     rest.find((a) => !a.startsWith('-'))     // the first argument without a dash
+//
+// which, in `lens search -k 3 "parse auth header"`, is `3` — THE VALUE OF THE FLAG IN FRONT
+// OF IT. lens searched for the literal string "3", printed `— 0 hits, ~0 tokens —` and
+// exited 0. The documented flag order (`"<query>" -k 3`) worked, so the whole defect was
+// invisible to anyone who wrote the flags last.
+//
+// `--glob 'src/*'` in front was the worst form: the query became `src/*`, `path` is an
+// indexed FTS column, so lens returned real, ranked, syntax-clean snippets from that
+// directory under an honest "32 more chunks matched but did not fit the budget" footer. It
+// does not look like a failure. It looks like an answer.
+//
+// The entire flag path of the CLI was untested — the two CLI tests above pass no flags at
+// all. That is the same shape as the .env walk: green tests that never entered the state.
+//
+// THE FIXTURE HAS TO MAKE THE THREE ANSWERS DIFFERENT, OR THE TESTS PROVE NOTHING.
+// The first version of this fixture was two files, both under src/, and a query that matched
+// only one of them. That separates "the query got searched" from "the glob got searched" — but
+// NOT from "the glob was parsed and then thrown away": replacing `path_glob: glob` with
+// `path_glob: undefined` in cli.js left every one of these tests green, including the one about
+// --glob. The CLI's glob plumbing was untested, which is exactly where the review found the next
+// wrong answer living. So: THREE files in TWO directories, and a query that matches one file in
+// EACH directory. Now
+//   · the query being searched          → ratelimit.js, not unrelated.js
+//   · the glob NOT being searched       → unrelated.js is absent
+//   · the glob actually FILTERING       → lib/legacy.js is absent, though the query matches it
+// are three distinguishable outcomes, and the third one is checked against the unscoped search
+// that proves legacy.js was reachable in the first place.
+async function indexedFixture(t) {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const dir = mkdtempSync(join(tmpdir(), 'lens-cliargs-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  mkdirSync(join(dir, 'lib'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'ratelimit.js'),
+    `// token bucket rate limiter for the public API\nexport function rateLimiter(opts) {\n  const snake_case_bucket = new Map();\n  return (key) => snake_case_bucket.get(key) ?? opts.burst;\n}\n`);
+  writeFileSync(join(dir, 'src', 'unrelated.js'),
+    `// pretty print a directory tree\nexport function prettyPrintTree(node) {\n  return node.children.map((c) => c.name);\n}\n`);
+  // Matches the same query as ratelimit.js, and lives OUTSIDE src/ — so `--glob 'src/*'`
+  // keeping it out is a fact about the FILTER, not about the query.
+  writeFileSync(join(dir, 'lib', 'legacy.js'),
+    `// the old rate limiter, kept until the last caller is gone\nexport function legacyRateLimiter(opts) {\n  return () => opts.burst;\n}\n`);
+  // Run the CLI INSIDE the fixture so the indexed paths are relative (`src/…`) — which is
+  // what makes `--glob 'src/*'` a legitimate filter, and the glob case reproducible.
+  const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+  const env = { ...process.env, LENS_DB: join(dir, 'index.db') };
+  const lens = (...args) => spawnSync('node', [cli, ...args], { cwd: dir, encoding: 'utf8', env });
+  const ix = lens('index', '.');
+  assert.equal(ix.status, 0, `the fixture must index before anything can be searched: ${ix.stderr}`);
+  return lens;
+}
+
+test('a flag\'s VALUE is not the query — `search -k 3 "<q>"` searches for the query, not "3"', async (t) => {
+  const lens = await indexedFixture(t);
+  const r = lens('search', '-k', '3', 'rate limiter');
+
+  assert.match(r.stdout, /ratelimit\.js/,
+    'the flag order every other CLI on the machine accepts must still find the code');
+  assert.doesNotMatch(r.stdout, /0 hits/,
+    'it searched for the VALUE of -k and told the agent its codebase has no rate limiter');
+  assert.equal(r.status, 0, 'and a search that worked exits 0');
+});
+
+test('...and a --glob in front does not become the query — the answer that LOOKS right', async (t) => {
+  const lens = await indexedFixture(t);
+  const r = lens('search', '--glob', 'src/*', 'rate limiter');
+
+  // The failure here is not "0 hits" — it is hits. `src/*` matches the indexed `path`
+  // column, so every file under src/ came back RANKED, as the answer to a question nobody
+  // asked, and nothing in the output invites a second look.
+  assert.match(r.stdout, /ratelimit\.js/, 'the query is what gets searched');
+  assert.doesNotMatch(r.stdout, /unrelated\.js/,
+    'the glob became the query and the whole directory came back as a ranked answer');
+  assert.equal(r.status, 0);
+
+  // AND THE GLOB MUST STILL FILTER. "the glob did not become the query" is satisfied just as
+  // well by dropping the glob on the floor — `path_glob: undefined` passes every assertion
+  // above. lib/legacy.js matches this query and is outside the scope, so its absence is the
+  // filter working, and the unscoped run below is what proves the absence means anything.
+  assert.doesNotMatch(r.stdout, /legacy\.js/,
+    '--glob was parsed and then thrown away: a scoped search returned a file outside the scope');
+  const unscoped = lens('search', 'rate limiter');
+  assert.match(unscoped.stdout, /legacy\.js/,
+    'if the query cannot reach lib/legacy.js unscoped, the assertion above proves nothing');
+});
+
+test('a query that cannot survive parsing is an ERROR, not an empty result', async (t) => {
+  const lens = await indexedFixture(t);
+
+  // 1. A query that IS a flag. `q` used to fall back to '' — core returned
+  //    { results: [] } with no count/matched/withheld at all, so even a JSON consumer
+  //    got no signal, and the CLI printed "— 0 hits —" over it.
+  const dash = lens('search', '--reindex');
+  assert.notEqual(dash.status, 0, 'a query lens could not parse is a failure, not a result');
+  assert.match(dash.stderr, /unknown flag/i, 'it names what went wrong');
+  assert.match(dash.stderr, /lens search -- /, 'and the command that fixes it: -- ends the flags');
+  assert.doesNotMatch(dash.stdout, /0 hits/, 'and it never claims to have looked');
+  // ...and that escape hatch actually works, so a dashy query stays reachable.
+  const escaped = lens('search', '--', '--reindex');
+  assert.equal(escaped.status, 0, 'after --, text that starts with a dash is a query again');
+
+  // 2. An unknown flag: its value is the next argument, which is exactly what the old
+  //    finder handed to the search as the query.
+  const typo = lens('search', 'rate limiter', '--topkens', '500');
+  assert.notEqual(typo.status, 0, '"--topkens 500" must not silently search for "500"');
+  assert.match(typo.stderr, /--topkens/, 'it names the flag it does not know');
+  assert.match(typo.stderr, /-k <value>|--tokens <value>/, 'and lists the flags it does know');
+
+  // 3. No query at all.
+  const none = lens('search');
+  assert.notEqual(none.status, 0, 'searching for nothing is not a search');
+  assert.match(none.stderr, /NOT an empty result|never looked/, 'and it says so in those words');
+
+  // 4. Forgotten quotes: searching only the first word answers a question nobody asked.
+  const loose = lens('search', 'rate', 'limiter');
+  assert.notEqual(loose.status, 0, 'three loose words are not one query');
+  assert.match(loose.stderr, /"rate limiter"/, 'and the error hands back the quoted command that works');
+
+  // 5. A query with no indexable characters never reaches the index at all.
+  const punct = lens('search', '???');
+  assert.notEqual(punct.status, 0, 'a query the tokenizer cannot see is not "no matches"');
+  assert.match(punct.stderr, /no searchable terms/, 'and it says which half of the sentence is wrong');
+});
+
+test('...but a real query with flags that finds nothing still says zero — WITH the haystack', async (t) => {
+  const lens = await indexedFixture(t);
+  // The neighbour case, and the one the guards must never swallow: correct flags, a real
+  // query, an honest absence. It stays a result (exit 0) — and it now carries the size of
+  // what was searched and the query it actually ran, so "0 hits" can no longer be mistaken
+  // for a search that was handed the wrong words.
+  const r = lens('search', '-k', '3', 'zzzznotarealtokenanywhere');
+  assert.equal(r.status, 0, 'an indexed search that finds nothing is a result, not a failure');
+  assert.match(r.stdout, /0 hits/, 'and it says so plainly');
+  assert.match(r.stdout, /zzzznotarealtokenanywhere/, 'quoting back the query it actually ran');
+  assert.match(r.stdout, /searched 3 files \/ 3 chunks/, 'and the size of the haystack it looked through');
+});
+
+// ── A NUMBER ON AN ABSENCE IS A CLAIM, AND IT HAS TO BE THE RIGHT NUMBER ────────
+// The line above was added so "0 hits" could no longer be mistaken for "your code does not
+// contain that" — and it shipped reporting `stats()`, the WHOLE INDEX, with the glob that
+// narrowed the search glued on the end:
+//
+//     — 0 hits for "requireGlobMatches" … searched 20 files / 125 chunks matching "mcp/*"
+//
+// mcp/* is ONE file and four chunks in that index, and the symbol is in src/core.js, which the
+// unscoped search finds. So the fix for a vague wrong answer was a PRECISE wrong answer: a
+// model reads "your filter matched twenty files and none of them contain it" and stops looking.
+// requireGlobMatches only promises the glob matches at least one file, so a scope far smaller
+// than the index is the ordinary case.
+test('an absence under --glob carries the size of the SCOPE, never the size of the index', async (t) => {
+  const lens = await indexedFixture(t);
+  const scoped = lens('search', '--glob', 'lib/*', 'zzzznotarealtokenanywhere');
+
+  assert.equal(scoped.status, 0, 'a scoped search that honestly finds nothing is still a result');
+  assert.match(scoped.stdout, /searched 1 file \/ 1 chunk matching "lib\/\*"/,
+    'lib/* is ONE indexed file: the number beside an absence must be what lens actually searched');
+  assert.doesNotMatch(scoped.stdout, /searched 3 file/,
+    'the whole-index total was reported as the filtered haystack — a specific, false claim');
+
+  // A second scope, so this is the mechanism and not one memorised pair of numbers. src/* is
+  // two of the three files, which is neither 1 nor the index total.
+  const two = lens('search', '--glob', 'src/*', 'zzzznotarealtokenanywhere');
+  assert.match(two.stdout, /searched 2 files \/ 2 chunks matching "src\/\*"/,
+    'a two-file scope reports two files');
+
+  // And with no filter the index IS the scope, so that number must not shrink.
+  const all = lens('search', 'zzzznotarealtokenanywhere');
+  assert.match(all.stdout, /searched 3 files \/ 3 chunks/, 'unscoped, the haystack is the whole index');
+  assert.doesNotMatch(all.stdout, /matching/, 'and there is no filter to name');
+});
+
+// ── A GUARD BUILT ON A WRONG MODEL OF THE INDEX IS NOT A GUARD ──────────────────
+// The "no searchable terms" check above was written with its own copy of ftsQuery's regex,
+// `/[\p{L}\p{N}_]/` — so it believed `_` was part of a word. db.js tokenizes with
+// `porter unicode61` and NO `tokenchars`, which makes `_` a SEPARATOR: `___` is indexed as
+// nothing at all. `lens search "___"` walked through the guard and came back
+// `— 0 hits for "___" … searched 20 files / 125 chunks`, exit 0 — the exact confident absence
+// the guard was added to prevent, now with a number on it. Same in `refs`.
+test('a query the index cannot see is an error — including one made only of underscores', async (t) => {
+  const lens = await indexedFixture(t);
+
+  const under = lens('search', '___');
+  assert.notEqual(under.status, 0, '`___` is not a word to unicode61 — lens cannot have looked for it');
+  assert.match(under.stderr, /no searchable terms/, 'and it says so instead of counting a haystack');
+  assert.doesNotMatch(under.stdout, /0 hits/, 'nothing on stdout may read as an answer');
+
+  const sym = lens('refs', '_');
+  assert.notEqual(sym.status, 0, '`_` is a separator, so FTS could never have found it');
+  assert.doesNotMatch(sym.stdout, /0 references/, '"0 references to _" is a sentence about lens, not the code');
+
+  // 🔑 THE OTHER HALF, or this guard is just a stricter way to be wrong: a name that CONTAINS
+  // underscores is indexed as the words in it and must stay a first-class query, both ways.
+  const snake = lens('search', 'snake_case_bucket');
+  assert.equal(snake.status, 0, 'a snake_case name is not punctuation');
+  assert.match(snake.stdout, /ratelimit\.js/, 'and it still finds the line it is on');
+  const snakeRefs = lens('refs', 'snake_case_bucket');
+  assert.equal(snakeRefs.status, 0);
+  assert.match(snakeRefs.stdout, /references to "snake_case_bucket"/, 'refs finds it too');
+});
+
+// ── `??` ON AN ENV VAR IS NOT `||` ──────────────────────────────────────────────
+// The argument rewrite turned `+flag('--port', process.env.LENS_PORT || 7900)` into
+// `+(flags['--port'] ?? process.env.LENS_PORT ?? 7900)`. `??` only catches null/undefined, so
+// an EMPTY LENS_PORT — "I did not choose a port", the thing an unset env var and a blank one
+// both mean — became `+''` = 0: a random ephemeral port, announced as `http://localhost:0`, a
+// URL that goes nowhere. Pinned without depending on 7900 being free: we TAKE it first, so the
+// correct behaviour is a loud collision and the regression is a happy bind on some other port.
+test('an EMPTY LENS_PORT means the default port, not port 0', async (t) => {
+  const { spawn } = await import('node:child_process');
+  const { createServer } = await import('node:http');
+  const { fileURLToPath } = await import('node:url');
+
+  const squatter = createServer(() => {});
+  let held = false;
+  await new Promise((res) => {
+    squatter.once('error', res);                  // already taken by something else: just as good
+    squatter.listen(7900, () => { held = true; res(); });
+  });
+  t.after(() => { if (held) squatter.close(); });
+
+  const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+  const dir = mkdtempSync(join(tmpdir(), 'lens-port-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const child = spawn('node', [cli, 'serve'],
+    { cwd: dir, env: { ...process.env, LENS_PORT: '', LENS_DB: join(dir, 'index.db') } });
+  t.after(() => child.kill());
+
+  let said = '';
+  const outcome = await new Promise((res) => {
+    const timer = setTimeout(() => res('neither'), 5000);
+    const done = (v) => { clearTimeout(timer); res(v); };
+    child.on('exit', () => done('exited'));
+    child.stdout.on('data', (d) => { said += d; if (/localhost:/.test(said)) done('listening'); });
+  });
+
+  assert.doesNotMatch(said, /localhost:0\b/, 'port 0 is an ephemeral port; lens announced it as a URL');
+  assert.equal(outcome, 'exited',
+    `an empty LENS_PORT must resolve to 7900 — which is taken here, so serve has to fail: ${said}`);
+});
+
 // ── stdout IS the protocol ──────────────────────────────────────────────────────
 // An MCP server speaks newline-delimited JSON-RPC on stdout and NOTHING else.
 //

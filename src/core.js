@@ -257,6 +257,24 @@ export function freshness(target = '.') {
 }
 
 // ── Search ──────────────────────────────────────────────────────────────────
+// 🔑 `_` IS A SEPARATOR, NOT A WORD CHARACTER — ASK THE TOKENIZER, NOT YOUR INSTINCTS.
+//
+// db.js builds the FTS table with `tokenize = 'porter unicode61'` and NO `tokenchars '_'`, so
+// unicode61 splits on everything that is not a letter or a digit. `parse_auth_header` is
+// indexed as the three tokens parse·auth·header, and `___` is indexed as NOTHING AT ALL.
+//
+// This exists because a caller wrote its own idea of "a word" (`/[\p{L}\p{N}_]/`, copied from
+// ftsQuery below) to decide whether a query was answerable, and got `_` wrong in the one
+// direction that matters: `lens search "___"` passed the check, reached the index, matched
+// nothing it could ever have matched, and came back "0 hits" — the confident wrong answer the
+// check was added to prevent. Whoever needs to know "can the index even see this?" must ask
+// here, so there is one answer and it is the tokenizer's.
+//
+// (ftsQuery keeps `_` on purpose and for a different job: `"parse_auth_header"` stays ONE
+// quoted FTS phrase, which matches those three tokens ADJACENT — a tighter, better hit than
+// three OR'd words. That is a ranking decision, not a claim about what is findable.)
+export const indexTerms = (s) => String(s ?? '').match(/[\p{L}\p{N}]+/gu) || [];
+
 // FTS5 MATCH with bm25 ranking. Returns token-budgeted, ranked snippets.
 function ftsQuery(q) {
   // turn a free-text query into a safe FTS5 OR query of bare terms. \p{L}\p{N} (not
@@ -541,12 +559,33 @@ export function map({ limit = 400 } = {}) {
   return { files: total, shown: rows.length, truncated: total > rows.length, by_lang: byLang, tree: rows };
 }
 
-export function stats() {
+// ── THE HAYSTACK IS THE SCOPE, NOT THE INDEX ──────────────────────────────────
+//
+// stats() answers "how big is the thing we are talking about", and a caller that has NARROWED
+// the search is not talking about the whole index any more. The CLI's honest-absence line was
+// built on the unscoped totals with the glob glued on the end:
+//
+//     — 0 hits for "requireGlobMatches" … searched 20 files / 125 chunks matching "mcp/*"
+//
+// mcp/* is ONE file and FOUR chunks, and the symbol is right there in src/core.js. That
+// sentence reads as "your filter matched twenty files and none of them contain it" — a
+// specific, quantified, FALSE claim about what lens looked at, handed to a model as grounds
+// for concluding the code does not exist. It was added by the fix for exactly that class of
+// bug, which is the trap: a vague "0 hits" at least claimed nothing, and a wrong number is
+// worse than no number because it invites even less of a second look. requireGlobMatches only
+// promises the glob matches AT LEAST ONE file, so "scope far smaller than the index" is the
+// normal case, not a corner.
+//
+// So the filter goes into the COUNT, and every field here means the same thing it always did —
+// just about the scope the caller actually searched.
+export function stats({ path_glob } = {}) {
+  const where = path_glob ? ` WHERE path GLOB ?` : '';
+  const a = path_glob ? [path_glob] : [];
   return {
-    files: get(`SELECT COUNT(*) n FROM files`)?.n ?? 0,
-    chunks: get(`SELECT COUNT(*) n FROM chunks`)?.n ?? 0,
-    total_lines: get(`SELECT COALESCE(SUM(lines),0) n FROM files`)?.n ?? 0,
-    languages: all(`SELECT lang, COUNT(*) n FROM files GROUP BY lang ORDER BY n DESC`),
+    files: get(`SELECT COUNT(*) n FROM files${where}`, ...a)?.n ?? 0,
+    chunks: get(`SELECT COUNT(*) n FROM chunks${where}`, ...a)?.n ?? 0,
+    total_lines: get(`SELECT COALESCE(SUM(lines),0) n FROM files${where}`, ...a)?.n ?? 0,
+    languages: all(`SELECT lang, COUNT(*) n FROM files${where} GROUP BY lang ORDER BY n DESC`, ...a),
   };
 }
 
