@@ -275,6 +275,11 @@ export function freshness(target = '.') {
 // three OR'd words. That is a ranking decision, not a claim about what is findable.)
 export const indexTerms = (s) => String(s ?? '').match(/[\p{L}\p{N}]+/gu) || [];
 
+export function unsearchable(query) {
+  return { query, count: 0, tokens: 0, results: [], matched: 0, withheld: 0, unsearchable: true,
+    reason: `no searchable terms in ${JSON.stringify(String(query ?? ''))} — the index is tokenized on letters and digits, and "_" and punctuation are separators, so there was nothing to look for and lens never looked. This is NOT "0 hits". (A name like parse_auth_header is fine: it is indexed as the words in it.)` };
+}
+
 // FTS5 MATCH with bm25 ranking. Returns token-budgeted, ranked snippets.
 function ftsQuery(q) {
   // turn a free-text query into a safe FTS5 OR query of bare terms. \p{L}\p{N} (not
@@ -338,8 +343,15 @@ export function search(query, { k = 8, max_tokens = 1800, path_glob } = {}) {
   // check `tokens + t > NaN` never skip — so the whole index over-returns.
   k = Number.isFinite(+k) && +k > 0 ? Math.floor(+k) : 8;
   max_tokens = Number.isFinite(+max_tokens) && +max_tokens > 0 ? Math.floor(+max_tokens) : 1800;
+  // A QUERY WITH NOTHING TO LOOK FOR IS NOT A QUERY WITH NOTHING FOUND. "___", "?!", "->" hold no term
+  // the index could contain (it is tokenized on letters and digits; "_" and punctuation SEPARATE), so
+  // lens never looked — and used to answer exactly as if it had: { results: [] }. The CLI guarded it;
+  // lens_search, the path every agent uses, did not. Say so in the result, never by silence. (Not a
+  // throw: the web explorer's /api/search would turn it into a 400 banner. The MCP layer and the CLI
+  // turn this flag into an error; the page says it in words.)
+  if (!indexTerms(query).length) return unsearchable(query);
   const m = ftsQuery(query);
-  if (!m) return { query, results: [], tokens: 0 };
+  if (!m) return unsearchable(query);
   let sql = `SELECT path, body, lang, start, "end", bm25(chunks) AS score
              FROM chunks WHERE chunks MATCH ?`;
   const args = [m];
@@ -411,7 +423,11 @@ export function references(symbol, { limit = 400 } = {}) {
   // bad limit (NaN → never truncates; 0 → truncates on the first ref) → default
   limit = Number.isFinite(+limit) && +limit > 0 ? Math.floor(+limit) : 400;
   const term = (String(symbol).match(/[\p{L}\p{N}_]+/u) || [])[0];
-  if (!term) return { symbol: null, count: 0, files: [] };
+  // The same lie, one tool over: a symbol with no letters or digits in it was answered "0 references".
+  if (!term || !indexTerms(symbol).length) {
+    const u = unsearchable(symbol);
+    return { symbol: null, count: 0, files: [], unsearchable: true, reason: u.reason };
+  }
   let rows;
   try { rows = all(`SELECT path, body, lang, start FROM chunks WHERE chunks MATCH ? ORDER BY path, start`, `"${term}"`); }
   catch (e) { return { symbol: term, count: 0, files: [], error: String(e.message) }; }

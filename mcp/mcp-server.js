@@ -26,7 +26,8 @@ const tools = [
       max_tokens: { type: 'integer', description: 'Token budget for results (default 1800)' },
       path_glob: { type: 'string', description: "Restrict to paths, e.g. 'src/*.js'" },
     }, required: ['query'] },
-    run: (a) => search(a.query, { k: a.k, max_tokens: a.max_tokens, path_glob: a.path_glob }),
+    // An unsearchable query is an ERROR to a model, never an empty result it will believe (core.unsearchable).
+    run: (a) => { const r = search(a.query, { k: a.k, max_tokens: a.max_tokens, path_glob: a.path_glob }); if (r.unsearchable) throw new Error(r.reason); return r; },
   },
   {
     name: 'lens_references',
@@ -35,7 +36,7 @@ const tools = [
       symbol: { type: 'string', description: 'The identifier to find, e.g. "parseAuthHeader"' },
       limit: { type: 'integer', description: 'Max references (default 400)' },
     }, required: ['symbol'] },
-    run: (a) => references(a.symbol, { limit: a.limit }),
+    run: (a) => { const r = references(a.symbol, { limit: a.limit }); if (r.unsearchable) throw new Error(r.reason); return r; },
   },
   {
     name: 'lens_outline',

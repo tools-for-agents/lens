@@ -27,6 +27,18 @@ import { spawnSync } from 'node:child_process';
 
 const CANARIES = [
   {
+    why: 'a query with nothing to look for is flagged unsearchable, never answered as "0 hits" — the confident absence an agent believes',
+    file: 'src/core.js',
+    find: '  if (!indexTerms(query).length) return unsearchable(query);',
+    into: '  void 0;',
+  },
+  {
+    why: 'lens_search turns an unsearchable query into an ERROR for the model, not an empty result',
+    file: 'mcp/mcp-server.js',
+    find: '    run: (a) => { const r = search(a.query, { k: a.k, max_tokens: a.max_tokens, path_glob: a.path_glob }); if (r.unsearchable) throw new Error(r.reason); return r; },',
+    into: '    run: (a) => search(a.query, { k: a.k, max_tokens: a.max_tokens, path_glob: a.path_glob }),',
+  },
+  {
     why: 'a credential file must never be indexed — lens served .env back through MCP, into a model',
     file: 'src/core.js',
     find: '  if (isSecretPath(name)) return true;',

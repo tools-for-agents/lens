@@ -1160,3 +1160,40 @@ test('map reports the TRUE total and flags a truncated tree — not a silently c
   assert.equal(full.truncated, false, 'a full map is not marked truncated');
   assert.equal(full.shown, full.files, 'shown equals the total when nothing was cut');
 });
+
+test('a query with nothing to look for is NOT "0 hits" — in core, and as an error over MCP', async () => {
+  for (const q of ['___', '?!', '->', '...']) {
+    const r = lens.search(q);
+    assert.equal(r.unsearchable, true, `${q} was answered as if lens had looked`);
+    assert.match(r.reason, /NOT "0 hits"/);
+    const refs = lens.references(q);
+    assert.equal(refs.unsearchable, true, `references(${q}) was answered "0 references"`);
+  }
+  assert.ok(!lens.search('parseAuthHeader').unsearchable, 'a real word is searched');
+  assert.ok(!lens.search('parse_auth_header').unsearchable, 'a snake_case name is its words, and searched');
+
+  const { spawn, spawnSync } = await import('node:child_process');
+  // Its own index: an earlier test repoints LENS_DB, and an EMPTY index is a different (and already
+  // honest) error — which would pass this test for the wrong reason.
+  const db = join(work, 'unsearchable.db');
+  spawnSync('node', ['src/cli.js', 'index', src], { env: { ...process.env, LENS_DB: db } });
+  const call = (name, args) => new Promise((resolve) => {
+    const p = spawn('node', ['mcp/mcp-server.js'], { stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, LENS_DB: db } });
+    let buf = '';
+    const done = (v) => { try { p.kill('SIGKILL'); } catch {} resolve(v); };
+    setTimeout(() => done({}), 10000);
+    p.stdout.on('data', (d) => {
+      buf += d;
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const l of lines) { let m; try { m = JSON.parse(l); } catch { continue; } if (m.id === 3) done(m); }
+    });
+    const send = (o) => p.stdin.write(JSON.stringify(o) + '\n');
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
+    send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: args } });
+  });
+  for (const [name, args] of [['lens_search', { query: '___' }], ['lens_references', { symbol: '?!' }]]) {
+    const m = await call(name, args);
+    assert.equal(m.result?.isError, true, `${name} handed a model a confident empty`);
+    assert.match(m.result.content[0].text, /NOT "0 hits"/);
+  }
+});

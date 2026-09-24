@@ -1535,6 +1535,11 @@ async function runSearch(q) {
     : '';
   const terms = (q.match(/[A-Za-z0-9_]+/g) || []).filter((t) => t.length > 1);
   const where = scope ? ` in <span class="sc-in">${esc(scope.replace(/\*$/, ''))}</span>` : '';
+  // Nothing to look for is not nothing found: say which one this is.
+  if (r.unsearchable) {
+    $('#results').innerHTML = `<div class="res-head">Nothing to search for in “${esc(q)}” — lens indexes letters and digits, and “_” and punctuation separate words, so it never looked. This is not “no matches”. Try a word or a symbol name.</div>`;
+    return;
+  }
   $('#results').innerHTML = r.count
     ? `<div class="res-head"><b>${r.count}</b> snippets for “${esc(q)}”${where} — pulled in <b>~${r.tokens}</b> tokens (budget-ranked by bm25)</div>` +
       withheldNote(r) + r.results.map((x) => hitCard(x, terms)).join('')
